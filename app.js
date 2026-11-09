@@ -22,7 +22,16 @@ const TUR_ADI = {
 let kisiler = [];          // {id, ad, adres, lat, lon}
 let aktifId = null;
 let kategori = "hepsi";
+let ulasim = "car";
 let sayac = 0;
+
+// Yol ağı üzerinden süre/mesafe: OSRM (OpenStreetMap verisi, ücretsiz, anahtarsız).
+const ROTA = {
+  car:  ["https://routing.openstreetmap.de/routed-car", "https://router.project-osrm.org"],
+  foot: ["https://routing.openstreetmap.de/routed-foot"],
+  bike: ["https://routing.openstreetmap.de/routed-bike"],
+};
+const TABLO_SINIRI = 100; // bir tablo isteğindeki en fazla nokta
 
 // ---------- Harita ----------
 const harita = L.map("harita", { zoomControl: true }).setView([41.015, 28.979], 11);
@@ -50,6 +59,58 @@ function durum(metin, hata = false) {
 function harf(ad) { return (ad || "?").trim().charAt(0).toLocaleUpperCase("tr") || "?"; }
 function renk(i) { return RENKLER[i % RENKLER.length]; }
 function km(m) { return m < 1000 ? `${Math.round(m / 10) * 10} m` : `${(m / 1000).toFixed(1)} km`; }
+function dk(sn) { const d = Math.max(1, Math.round(sn / 60)); return d < 60 ? `${d} dk` : `${Math.floor(d / 60)} sa ${d % 60} dk`; }
+
+async function rotaIstek(yol) {
+  let son;
+  for (const taban of ROTA[ulasim]) {
+    try {
+      const j = await getJSON(`${taban}${yol}`, { signal: AbortSignal.timeout(20000) });
+      if (j.code !== "Ok") throw new Error(j.code);
+      return j;
+    } catch (e) { son = e; }
+  }
+  throw son;
+}
+
+// Kişilerden hedeflere yol süresi ve mesafesi. Sonuç: [{sure:[..kişi], mesafe:[..kişi], konum:[lat,lon]}]
+async function yolTablosu(kisiListesi, hedefler) {
+  const sonuc = [];
+  const parca = TABLO_SINIRI - kisiListesi.length;
+  for (let i = 0; i < hedefler.length; i += parca) {
+    const grup = hedefler.slice(i, i + parca);
+    const noktalar = [...kisiListesi, ...grup].map((p) => `${p.lon.toFixed(6)},${p.lat.toFixed(6)}`).join(";");
+    const kaynak = kisiListesi.map((_, k) => k).join(";");
+    const hedef = grup.map((_, k) => k + kisiListesi.length).join(";");
+    const j = await rotaIstek(`/table/v1/driving/${noktalar}?sources=${kaynak}&destinations=${hedef}&annotations=duration,distance`);
+    grup.forEach((_, h) => sonuc.push({
+      sure: kisiListesi.map((_, k) => j.durations[k][h]),
+      mesafe: kisiListesi.map((_, k) => j.distances[k][h]),
+      konum: [j.destinations[h].location[1], j.destinations[h].location[0]],
+    }));
+  }
+  return sonuc;
+}
+
+// Adalet puanı: en uzun yolculuk + kişiler arası farkın yarısı. Ulaşılamayan varsa elenir.
+function puanla(sureler) {
+  if (sureler.some((s) => s == null)) return null;
+  const enUzun = Math.max(...sureler), fark = enUzun - Math.min(...sureler);
+  return { enUzun, fark, puan: enUzun + 0.5 * fark };
+}
+
+// Orta noktanın etrafına halkalar halinde örnek noktalar serper.
+function ornekNoktalar(merkez, yaricap) {
+  const kx = 111320 * Math.cos(merkez.lat * Math.PI / 180), ky = 110540;
+  const noktalar = [{ ...merkez }];
+  [[0.2, 6], [0.4, 10], [0.6, 14], [0.85, 18]].forEach(([oran, adet]) => {
+    for (let i = 0; i < adet; i++) {
+      const a = (2 * Math.PI * i) / adet + oran;
+      noktalar.push({ lat: merkez.lat + (Math.sin(a) * yaricap * oran) / ky, lon: merkez.lon + (Math.cos(a) * yaricap * oran) / kx });
+    }
+  });
+  return noktalar;
+}
 
 function mesafe(a, b) { // haversine, metre
   const R = 6371000, r = Math.PI / 180;
@@ -164,11 +225,12 @@ function haritayiSigdir() {
 function kaydet() {
   const hazir = kisiler.filter((k) => k.lat != null);
   const parca = hazir.map((k) => [k.ad, k.lat.toFixed(5), k.lon.toFixed(5)].map(encodeURIComponent).join(",")).join(";");
-  history.replaceState(null, "", hazir.length ? `#g=${parca}&k=${kategori}` : location.pathname);
+  history.replaceState(null, "", hazir.length ? `#g=${parca}&k=${kategori}&u=${ulasim}` : location.pathname);
 }
 function baglantidanYukle() {
   const h = new URLSearchParams(location.hash.slice(1));
   if (h.get("k") && KATEGORI[h.get("k")]) kategori = h.get("k");
+  if (h.get("u") && ROTA[h.get("u")]) ulasim = h.get("u");
   (h.get("g") || "").split(";").filter(Boolean).forEach((p) => {
     const [ad, lat, lon] = p.split(",").map(decodeURIComponent);
     if (!isNaN(+lat) && !isNaN(+lon)) kisiEkle({ ad, lat: +lat, lon: +lon, adres: "Bağlantıdan geldi" });
@@ -229,38 +291,48 @@ async function bul() {
   const btn = $("#bul"); btn.disabled = true;
   sonucKatmani.clearLayers(); cizgiKatmani.clearLayers();
   try {
+    // 1) Yol ağında herkese en adil bölgeyi bul: örnek noktalara herkesten yol süresi.
     const { merkez, yaricap } = adilMerkez(hazir);
-    // Arama çemberi: grup dağıldıkça büyür, bulamazsa genişletir.
-    let r = Math.min(Math.max(1500, yaricap * 0.5), 15000), mekanlar = [];
-    for (let deneme = 0; deneme < 3; deneme++) {
-      durum(`Orta noktanın ${km(r)} çevresinde mekan aranıyor…`);
-      mekanlar = await mekanlariGetir(merkez, r);
-      if (mekanlar.length >= 8) break;
-      r = Math.min(r * 2, 30000);
-    }
-    const cember = mekanlar.length ? Math.max(...mekanlar.map((m) => mesafe(merkez, m))) : r;
-    L.circle([merkez.lat, merkez.lon], { radius: cember, color: "#e4572e", weight: 1, fillOpacity: 0.04, dashArray: "4 6" }).addTo(sonucKatmani);
-    L.circleMarker([merkez.lat, merkez.lon], { radius: 6, color: "#1d1d1f", fillColor: "#fff", fillOpacity: 1, weight: 2 })
-      .bindTooltip("Adil orta nokta").addTo(sonucKatmani);
+    durum("Yollar üzerinden herkese en adil bölge aranıyor…");
+    const ornekler = ornekNoktalar(merkez, Math.max(yaricap, 1500));
+    const tablo = await yolTablosu(hazir, ornekler);
+    const adaylar = tablo.map((t) => ({ ...t, p: puanla(t.sure) })).filter((t) => t.p).sort((a, b) => a.p.puan - b.p.puan);
+    if (!adaylar.length) throw new Error("Hiçbir noktaya herkes ulaşamıyor");
+    const enIyi = { lat: adaylar[0].konum[0], lon: adaylar[0].konum[1] };
+    // En iyi ikinci bölge birincisinden uzaksa orada da mekan ara (ör. boğazın iki yakası).
+    const ikinci = adaylar.slice(1, 6).map((t) => ({ lat: t.konum[0], lon: t.konum[1] })).find((p) => mesafe(p, enIyi) > 2500);
 
+    // 2) O bölgelerdeki mekanları topla.
+    const r = Math.min(Math.max(1500, yaricap * 0.3), 6000);
+    durum(`Adil bölgenin ${km(r)} çevresinde mekan aranıyor…`);
+    const merkezler = ikinci ? [enIyi, ikinci] : [enIyi];
+    const gorulen = new Set();
+    let mekanlar = (await Promise.all(merkezler.map((m) => mekanlariGetir(m, r)))).flat()
+      .filter((m) => !gorulen.has(m.id) && gorulen.add(m.id));
+    if (!mekanlar.length) mekanlar = await mekanlariGetir(enIyi, r * 3);
     if (!mekanlar.length) { $("#sonucBolumu").hidden = true; return durum("Bu bölgede uygun mekan bulunamadı. Başka bir kategori dene.", true); }
+    // Çok fazlaysa adil noktaya en yakın 150 tanesini yol hesabına sok.
+    mekanlar.sort((a, b) => mesafe(enIyi, a) - mesafe(enIyi, b));
+    mekanlar = mekanlar.slice(0, 150);
 
-    // Puan: en uzaktaki kişinin mesafesi + aradaki farkın yarısı. Düşük olan daha adil.
-    for (const m of mekanlar) {
-      m.mesafeler = hazir.map((k) => mesafe(k, m));
-      m.enUzak = Math.max(...m.mesafeler);
-      m.fark = m.enUzak - Math.min(...m.mesafeler);
-      m.puan = m.enUzak + 0.5 * m.fark;
-    }
-    mekanlar.sort((a, b) => a.puan - b.puan);
+    // 3) Her mekana herkesten gerçek yol süresi ve mesafesi.
+    durum(`${mekanlar.length} mekan için herkesin yol süresi hesaplanıyor…`);
+    const yollar = await yolTablosu(hazir, mekanlar);
+    mekanlar.forEach((m, i) => {
+      m.sureler = yollar[i].sure; m.mesafeler = yollar[i].mesafe;
+      Object.assign(m, puanla(m.sureler) || { puan: Infinity });
+    });
+    mekanlar = mekanlar.filter((m) => isFinite(m.puan)).sort((a, b) => a.puan - b.puan);
+    if (!mekanlar.length) throw new Error("Mekanlara yol bulunamadı");
+
     const ilk = mekanlar.slice(0, 15);
     sonuclariGoster(ilk, hazir);
-    durum(`${mekanlar.length} mekan bulundu, en adil ${ilk.length} tanesi aşağıda.`);
+    durum(`${mekanlar.length} mekanın yol süresi hesaplandı, en adil ${ilk.length} tanesi aşağıda.`);
     harita.fitBounds([...hazir.map((k) => [k.lat, k.lon]), ...ilk.map((m) => [m.lat, m.lon])], { padding: [40, 40] });
     mekanSec(ilk[0], hazir, 0);
   } catch (e) {
     console.error(e);
-    durum("Mekan servisine ulaşılamadı (ücretsiz servis yoğun olabilir). Birkaç saniye sonra tekrar dene.", true);
+    durum("Harita servislerine ulaşılamadı (ücretsiz servisler yoğun olabilir). Birkaç saniye sonra tekrar dene.", true);
   } finally { btn.disabled = false; }
 }
 
@@ -273,9 +345,9 @@ function sonuclariGoster(liste, hazir) {
     const harita_url = `https://www.google.com/maps/search/?api=1&query=${m.lat},${m.lon}`;
     li.innerHTML = `
       <div class="ust"><span class="ad"></span><span class="tur"></span></div>
-      <div class="mesafeler">${hazir.map((k, i) => `<span><i class="nokta" style="background:${renk(kisiler.indexOf(k))}"></i>${esc(k.ad)}: ${km(m.mesafeler[i])}</span>`).join("")}</div>
+      <div class="mesafeler">${hazir.map((k, i) => `<span><i class="nokta" style="background:${renk(kisiler.indexOf(k))}"></i>${esc(k.ad)}: <b>${dk(m.sureler[i])}</b> · ${km(m.mesafeler[i])}</span>`).join("")}</div>
       ${m.adres ? `<div class="ozet">${esc(m.adres)}</div>` : ""}
-      <div class="ozet">En uzak: ${km(m.enUzak)} · Fark: ${km(m.fark)} · <a href="${harita_url}" target="_blank" rel="noopener">Haritada aç</a></div>`;
+      <div class="ozet">En uzun yol: ${dk(m.enUzun)} · Süre farkı: ${dk(m.fark)} · <a href="${harita_url}" target="_blank" rel="noopener">Haritada aç</a></div>`;
     li.querySelector(".ad").textContent = m.ad;
     li.querySelector(".tur").textContent = m.tur;
     li.addEventListener("click", (e) => { if (e.target.tagName !== "A") mekanSec(m, hazir, sira); });
@@ -286,12 +358,26 @@ function sonuclariGoster(liste, hazir) {
   });
 }
 
-function mekanSec(m, hazir, sira) {
+// Seçilen mekana herkesin gerçek rotasını çizer.
+let secimNo = 0;
+async function mekanSec(m, hazir, sira) {
+  const no = ++secimNo;
   cizgiKatmani.clearLayers();
-  hazir.forEach((k) => L.polyline([[k.lat, k.lon], [m.lat, m.lon]], { color: renk(kisiler.indexOf(k)), weight: 3, opacity: 0.8, dashArray: "6 6" }).addTo(cizgiKatmani));
   document.querySelectorAll(".sonuc").forEach((x, i) => x.classList.toggle("secili", i === sira));
   pinler.forEach((p, i) => p.setIcon(L.divIcon({ className: "", html: `<div class="mekan-pin${i === sira ? " secili" : ""}"></div>`, iconSize: i === sira ? [22, 22] : [14, 14], iconAnchor: i === sira ? [11, 11] : [7, 7] })));
   pinler[sira]?.setZIndexOffset(1000).openTooltip();
+
+  m.rotalar ??= await Promise.all(hazir.map((k) =>
+    rotaIstek(`/route/v1/driving/${k.lon.toFixed(6)},${k.lat.toFixed(6)};${m.lon.toFixed(6)},${m.lat.toFixed(6)}?overview=full&geometries=geojson`)
+      .then((j) => j.routes[0].geometry.coordinates.map(([lon, lat]) => [lat, lon]))
+      .catch(() => [[k.lat, k.lon], [m.lat, m.lon]])));
+  if (no !== secimNo) return; // bu arada başka mekan seçildi
+  hazir.forEach((k, i) => {
+    const r = renk(kisiler.indexOf(k));
+    L.polyline(m.rotalar[i], { color: r, weight: 10, opacity: 0.25, lineCap: "round" }).addTo(cizgiKatmani);
+    L.polyline(m.rotalar[i], { color: r, weight: 4, opacity: 0.95, lineCap: "round" })
+      .bindTooltip(`${esc(k.ad)}: ${dk(m.sureler[i])} · ${km(m.mesafeler[i])}`, { sticky: true }).addTo(cizgiKatmani);
+  });
 }
 
 function esc(s) { return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
@@ -304,6 +390,11 @@ $("#paylas").addEventListener("click", async () => {
   try { await navigator.clipboard.writeText(location.href); durum("Bağlantı kopyalandı. Gruba at, herkes kendi konumunu ekleyip geri göndersin."); }
   catch { prompt("Bu bağlantıyı kopyala:", location.href); }
 });
+document.querySelectorAll("#ulasim button").forEach((b) => b.addEventListener("click", () => {
+  ulasim = b.dataset.u;
+  document.querySelectorAll("#ulasim button").forEach((x) => x.classList.toggle("secili", x === b));
+  kaydet();
+}));
 document.querySelectorAll("#kategoriler button").forEach((b) => b.addEventListener("click", () => {
   kategori = b.dataset.k;
   document.querySelectorAll("#kategoriler button").forEach((x) => x.classList.toggle("secili", x === b));
@@ -312,5 +403,6 @@ document.querySelectorAll("#kategoriler button").forEach((b) => b.addEventListen
 
 baglantidanYukle();
 document.querySelectorAll("#kategoriler button").forEach((x) => x.classList.toggle("secili", x.dataset.k === kategori));
+document.querySelectorAll("#ulasim button").forEach((x) => x.classList.toggle("secili", x.dataset.u === ulasim));
 if (!kisiler.length) { kisiEkle({ ad: "Ben" }); kisiEkle({ ad: "Arkadaş 1" }); aktifId = kisiler[0].id; ciz(); }
 haritayiSigdir();
