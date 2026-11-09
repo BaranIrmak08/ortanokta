@@ -1,9 +1,10 @@
 // Orta Nokta: arkadaş grubuna gerçek yolculuk süresine göre adil mekan bulur.
-// Her kişi kendi ulaşımını seçer: toplu taşıma (MOTIS + İBB verisi), araba / yürüyüş / bisiklet (OSRM).
-// Mekanlar: Photon (yedek Overpass). Adres: Nominatim. Harita: Leaflet + OpenStreetMap.
+// Her kişi kendi ulaşımını seçer. Toplu taşıma, araba, yürüyüş, bisiklet: kendi MOTIS sunucumuz (İBB verisi + İstanbul OSM).
+// Mekanlar ve istasyon girişleri: kendi OSM çıkarımımız (mekanlar.json, girisler.json). Adres önerisi: Photon (yedek MOTIS).
 
 // ---------- Ayarlar ----------
-const MOTIS = (() => { try { return localStorage.getItem("motis") || "http://localhost:8080"; } catch { return "http://localhost:8080"; } })();
+// MOTIS'e aynı adresten (/motis) ulaşılır: sunucu.py istekleri yerel MOTIS'e aktarır. Böylece telefondan da çalışır.
+const MOTIS = (() => { try { return localStorage.getItem("motis") || `${location.origin}/motis`; } catch { return `${location.origin}/motis`; } })();
 const OSRM = {
   car:  ["https://routing.openstreetmap.de/routed-car", "https://router.project-osrm.org"],
   foot: ["https://routing.openstreetmap.de/routed-foot"],
@@ -20,6 +21,12 @@ const TABLO_SINIRI = 100;       // OSRM tablo isteğindeki en fazla nokta
 const YURUME_HIZI = 1.2;        // m/sn
 const DOLAMBAC = 1.3;           // kuş uçuşu -> gerçek yürüme yolu çarpanı
 const DURAK_YARICAP = 800;      // mekana bu kadar yakın duraklara bakılır (m)
+// Ücret tahmini (Kasım 2026; kaynak: İstanbulkart Temmuz 2026 tarifesi haberleri, EPDK İstanbul benzin ortalaması)
+const UCRET = {
+  tam: 46.20, aktarma: 34.40,                       // İstanbulkart tam biniş ve aktarma (yaklaşık)
+  marmarayEnAz: 37.40, marmarayEnCok: 82.17, marmarayHatKm: 76,  // Marmaray mesafeye göre
+  benzinLitre: 74.5, litre100km: 7,                 // arabada yalnız yakıt; köprü/otopark hariç
+};
 const RENKLER = ["#3a6ea5", "#2a9d6f", "#8e44ad", "#d4a017", "#c0392b", "#16a085", "#e67e22", "#5d6d7e", "#d35400", "#7f8c8d"];
 const OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter"];
 
@@ -43,10 +50,29 @@ let kategori = "hepsi";
 let sayac = 0;
 
 // ---------- Harita ----------
-const harita = L.map("harita", { zoomControl: true }).setView([41.015, 28.979], 11);
-L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-  maxZoom: 19, attribution: "© OpenStreetMap katkıcıları · Toplu taşıma: İBB Açık Veri",
-}).addTo(harita);
+const harita = L.map("harita", { zoomControl: true, preferCanvas: false }).setView([41.015, 28.979], 11);
+const ATIF = "© OpenStreetMap katkıcıları · Toplu taşıma: İBB Açık Veri";
+// Koyu harita: aynı OpenStreetMap karoları CSS filtresiyle koyulaştırılır (ek servis ve anahtar gerekmez)
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: ATIF, className: "zemin" }).addTo(harita);
+let tema = (() => { try { return localStorage.getItem("harita-tema") || "acik"; } catch { return "acik"; } })();
+const TemaDugmesi = L.Control.extend({
+  options: { position: "topright" },
+  onAdd() {
+    const b = L.DomUtil.create("button", "tema-dugme");
+    const yaz = () => { b.textContent = tema === "acik" ? "🌙 Koyu" : "☀️ Açık"; b.title = "Harita rengini değiştir"; };
+    yaz();
+    L.DomEvent.on(b, "click", (e) => {
+      L.DomEvent.stop(e);
+      tema = tema === "acik" ? "koyu" : "acik";
+      document.body.classList.toggle("koyu-harita", tema === "koyu");
+      try { localStorage.setItem("harita-tema", tema); } catch { /* önemli değil */ }
+      yaz();
+    });
+    return b;
+  },
+});
+new TemaDugmesi().addTo(harita);
+document.body.classList.toggle("koyu-harita", tema === "koyu");
 const kisiKatmani = L.layerGroup().addTo(harita);
 const sonucKatmani = L.layerGroup().addTo(harita);
 const cizgiKatmani = L.layerGroup().addTo(harita);
@@ -270,14 +296,16 @@ async function topluErisim(kisi, zaman) {
   const url = `${MOTIS}/api/v1/one-to-all?one=${kisi.lat.toFixed(6)},${kisi.lon.toFixed(6)}&time=${zamanISO(zaman, -ONCE)}&maxTravelTime=${ONCE}`;
   const j = await getJSON(url, { signal: AbortSignal.timeout(30000) });
   const izgara = new Map(); // ~800 m'lik hücreler
+  const tum = [];
   const hucre = (lat, lon) => `${Math.floor(lat / 0.008)},${Math.floor(lon / 0.01)}`;
   for (const x of j.all) {
     const s = { lat: x.place.lat, lon: x.place.lon, sure: x.duration * 60 + Math.max(0, x.k - 1) * AKTARMA_CEZASI };
+    tum.push(s);
     const h = hucre(s.lat, s.lon);
     if (!izgara.has(h)) izgara.set(h, []);
     izgara.get(h).push(s);
   }
-  return (nokta) => {
+  const fn = (nokta) => {
     let enIyi = mesafe(kisi, nokta) < 2500 ? yurumeSuresi(mesafe(kisi, nokta)) : Infinity; // yürüyerek de gidebilir
     const [a, b] = hucre(nokta.lat, nokta.lon).split(",").map(Number);
     for (let i = -1; i <= 1; i++) for (let k = -1; k <= 1; k++) {
@@ -288,6 +316,8 @@ async function topluErisim(kisi, zaman) {
     }
     return enIyi;
   };
+  fn.noktalar = tum; // yayılma animasyonu için
+  return fn;
 }
 
 // Kesin toplu taşıma yolculuğu: buluşma saatinde orada olacak şekilde. En iyi seçenek: süre + aktarma cezası.
@@ -333,15 +363,16 @@ function yerAdi(yer) { return yer.name === "START" ? "çıkış noktası" : yer.
 // ---------- Araba / yürüyüş / bisiklet (MOTIS sokak yönlendirmesi, aynı İstanbul haritası) ----------
 const SOKAK_MODU = { car: "CAR", foot: "WALK", bike: "BIKE" };
 async function sokakSureleri(k, noktalar) {
-  const sonuc = [];
-  for (let i = 0; i < noktalar.length; i += 100) {
-    const many = noktalar.slice(i, i + 100).map((p) => `${p.lat.toFixed(6)};${p.lon.toFixed(6)}`).join(",");
+  const parcalar = [];
+  for (let i = 0; i < noktalar.length; i += 100) parcalar.push(noktalar.slice(i, i + 100));
+  const sonuclar = await Promise.all(parcalar.map(async (parca) => { // sunucu çok çekirdekli: parçaları aynı anda sor
+    const many = parca.map((p) => `${p.lat.toFixed(6)};${p.lon.toFixed(6)}`).join(",");
     const j = await getJSON(`${MOTIS}/api/v1/one-to-many?one=${k.lat.toFixed(6)};${k.lon.toFixed(6)}&many=${many}`
-      + `&mode=${SOKAK_MODU[k.tur]}&max=7200&maxMatchingDistance=250&arriveBy=false`, { signal: AbortSignal.timeout(20000) });
+      + `&mode=${SOKAK_MODU[k.tur]}&max=7200&maxMatchingDistance=250&arriveBy=false`, { signal: AbortSignal.timeout(30000) });
     if (!Array.isArray(j)) throw new Error(j.error || "one-to-many");
-    j.forEach((x) => sonuc.push(x.duration ?? Infinity));
-  }
-  return sonuc;
+    return j.map((x) => x.duration ?? Infinity);
+  }));
+  return sonuclar.flat();
 }
 // Sokak rotası (çizgi + mesafe): önce MOTIS, olmazsa OSRM
 async function sokakRotasi(k, m, zaman) {
@@ -533,7 +564,7 @@ let yerelMekanlar = null;
 async function yerelMekanlariYukle() {
   if (!yerelMekanlar) {
     const j = await getJSON("mekanlar.json", { signal: AbortSignal.timeout(15000) });
-    yerelMekanlar = j.m.map(([lat, lon, ad, t, adres]) => ({ lat, lon, ad, osm: j.turler[t], adres, id: `${ad}|${lat}|${lon}` }));
+    yerelMekanlar = j.m.map(([lat, lon, ad, t, adres, saat]) => ({ lat, lon, ad, osm: j.turler[t], adres, saat, id: `${ad}|${lat}|${lon}` }));
   }
   return yerelMekanlar;
 }
@@ -566,15 +597,97 @@ async function sinirli(isler, n = 6) {
   return sonuc;
 }
 
+// ---------- Sıralama ----------
+// Mod: "adil" (en uzun yolculuk + farkın yarısı), "toplam" (herkesin süresi toplamı), "aktarma" (adil + aktarma başına 15 dk)
+// Ek cezalar: buluşma bitmeden kapanan mekan +20 dk, toplu taşımayla eve dönemeyen her kişi +60 dk.
+function siralamaPuani(m) {
+  const s = m.cezali || m.sureler;
+  if (!s || s.some((x) => x == null || !isFinite(x))) return Infinity;
+  const enUzun = Math.max(...s), fark = enUzun - Math.min(...s);
+  const mod = $("#siralama").value;
+  let p = mod === "toplam" ? s.reduce((a, b) => a + b, 0) : enUzun + 0.5 * fark;
+  if (mod === "aktarma") p += (m.aktarmaSayisi || 0) * 15 * 60;
+  if (m.acik?.durum === "erken") p += 20 * 60;
+  p += (m.donusYok?.length || 0) * 3600;
+  return p;
+}
+function goruntuDegerleri(m) {
+  m.enUzun = Math.max(...m.sureler);
+  m.fark = m.enUzun - Math.min(...m.sureler);
+  m.puan = siralamaPuani(m);
+}
+
+// ---------- Dönüş yolu ----------
+// Buluşma bitince toplu taşımayla eve dönüş. null: o saatten sonra 3 saat içinde dönüş yok.
+async function donusRotasi(k, m, zaman, sureDk) {
+  const cikis = zamanISO(zaman, sureDk);
+  const url = `${MOTIS}/api/v1/plan?fromPlace=${m.lat.toFixed(6)},${m.lon.toFixed(6)}&toPlace=${k.lat.toFixed(6)},${k.lon.toFixed(6)}`
+    + `&time=${cikis}&arriveBy=false&numItineraries=2&maxPreTransitTime=1200&maxPostTransitTime=1200&searchWindow=10800`;
+  const j = await getJSON(url, { signal: AbortSignal.timeout(30000) });
+  const secenekler = [...(j.itineraries || []), ...(j.direct || [])]
+    .filter((it) => new Date(it.startTime) - new Date(cikis) < 3 * 3600000);
+  if (!secenekler.length) return null;
+  const maliyet = (it) => new Date(it.endTime).getTime() + ekMaliyet(it) * 1000; // en erken eve varış (cezalarla)
+  return secenekler.sort((a, b) => maliyet(a) - maliyet(b))[0];
+}
+// Dönüşte 1 saatten fazla beklemek gerekiyorsa da "dönüş yok" sayılır
+function donusSorunlu(it, zaman, sureDk) {
+  return !it || new Date(it.startTime) - new Date(zamanISO(zaman, sureDk)) > 3600000;
+}
+
+// ---------- Ücret ----------
+function topluUcret(it) {
+  if (!it) return null;
+  let tl = 0, binis = 0, tahmini = false;
+  for (const l of it.legs) {
+    if (l.mode === "WALK") continue;
+    if (tarifesiz(l)) { tahmini = true; continue; } // minibüs/dolmuş: mesafeye göre nakit, bilinmiyor
+    if (hatTuru(l).ad === "Marmaray") {
+      const kmYol = (mesafe(l.from, l.to) / 1000) * 1.1;
+      tl += Math.min(UCRET.marmarayEnCok, UCRET.marmarayEnAz + (UCRET.marmarayEnCok - UCRET.marmarayEnAz) * (kmYol / UCRET.marmarayHatKm));
+    } else tl += binis === 0 ? UCRET.tam : UCRET.aktarma;
+    binis++;
+  }
+  return { tl, tahmini };
+}
+function kisiUcreti(k, m, i) {
+  if (k.tur === "transit") return topluUcret(m.rotalar?.[k.id]);
+  if (k.tur === "car") return m.mesafeler[i] != null ? { tl: (m.mesafeler[i] / 1000) * (UCRET.litre100km / 100) * UCRET.benzinLitre, tahmini: false, yakit: true } : null;
+  return { tl: 0, tahmini: false };
+}
+const tlYaz = (u) => (u ? (u.tl === 0 && !u.tahmini ? "ücretsiz" : `≈ ${Math.round(u.tl)} TL${u.tahmini ? "+" : ""}`) : "");
+
+// ---------- İstasyon girişleri ----------
+let girisler = [];
+getJSON("girisler.json").then((j) => { girisler = j.map(([lat, lon, ad, ref]) => ({ lat, lon, ad, ref })); }).catch(() => {});
+const RAYLI = new Set(["Metro", "Marmaray", "Tramvay", "Füniküler"]);
+// İstasyona (durak) 350 m içindeki girişlerden, yürüyüşün öbür ucuna en yakın olanı
+function enYakinGiris(durak, oburUc) {
+  let en = null, enM = Infinity;
+  for (const g of girisler) {
+    if (mesafe(g, durak) > 350) continue;
+    const m = mesafe(g, oburUc);
+    if (m < enM) { enM = m; en = g; }
+  }
+  return en;
+}
+// Girişin okunur adı; adı da numarası da yoksa "" (yalnız haritada işaretlenir)
+function girisAdi(g) {
+  if (g.ad && g.ref && !g.ad.includes(g.ref)) return `${g.ad} (${g.ref})`;
+  return g.ad || (g.ref ? `${g.ref} numaralı giriş` : "");
+}
+
 // ---------- Ana akış ----------
+let sonArama = null; // {hazir, zaman, sureDk, ilk, toplu}
 async function bul() {
   try { await bekleyenAdresleriCoz(); } catch (e) { return durum(e.message.startsWith("HTTP") ? "Adres servisine ulaşılamadı, biraz sonra tekrar dene." : e.message, true); }
   const hazir = kisiler.filter((k) => k.lat != null);
   if (hazir.length < 2) return durum("En az 2 kişinin konumu lazım: adres yaz ve listeden seç, ya da 📍 Konumum'a bas.", true);
   const zaman = $("#zaman").value;
   if (!zaman) return durum("Buluşma zamanını seç.", true);
+  const sureDk = +$("#sure").value * 60;
   const btn = $("#bul"); btn.disabled = true;
-  sonucKatmani.clearLayers(); cizgiKatmani.clearLayers();
+  sonucKatmani.clearLayers(); cizgiKatmani.clearLayers(); yayilmaKatmani.clearLayers();
   const t0 = performance.now();
   try {
     // 0) Toplu taşımacılar için "nereye kaç dakikada varırım" haritası
@@ -586,7 +699,7 @@ async function bul() {
         await Promise.all(topluKisiler.map(async (k) => toplu.set(k.id, await topluErisim(k, zaman))));
       } catch (e) {
         console.error(e);
-        throw new Error(`Toplu taşıma sunucusuna ulaşılamadı (${MOTIS}). Sunucu açık mı?`);
+        throw new Error("Toplu taşıma sunucusuna ulaşılamadı. baslat.bat ile açtığından emin ol.");
       }
     }
 
@@ -600,61 +713,84 @@ async function bul() {
     const enIyi = adaylar[0].p;
     const ikinci = adaylar.slice(1, 8).map((x) => x.p).find((p) => mesafe(p, enIyi) > 2500);
 
-    // 2) Bölgelerdeki mekanlar
+    // 2) Bölgelerdeki mekanlar; buluşma saatinde kapalı olanlar elenir
     const r = Math.min(Math.max(1200, yaricap * 0.25), 5000);
-    durum(`Adil bölgelerde mekan aranıyor…`);
+    durum("Adil bölgelerde mekan aranıyor…");
     const gorulen = new Set();
     let mekanlar = (await Promise.all((ikinci ? [enIyi, ikinci] : [enIyi]).map((m) => mekanlariGetir(m, r)))).flat()
       .filter((m) => !gorulen.has(m.id) && gorulen.add(m.id));
     if (!mekanlar.length) mekanlar = await mekanlariGetir(enIyi, r * 3);
-    if (!mekanlar.length) { $("#sonucBolumu").hidden = true; return durum("Bu bölgede uygun mekan bulunamadı. Başka bir kategori dene.", true); }
+    mekanlar.forEach((m) => { m.acik = acikMi(m.saat, zaman, sureDk); });
+    const kapali = mekanlar.filter((m) => m.acik.durum === "kapali").length;
+    mekanlar = mekanlar.filter((m) => m.acik.durum !== "kapali");
+    if (!mekanlar.length) { $("#sonucBolumu").hidden = true; return durum(`Bu bölgede o saatte açık uygun mekan bulunamadı${kapali ? ` (${kapali} mekan kapalı)` : ""}. Başka bir kategori ya da saat dene.`, true); }
     mekanlar.sort((a, b) => mesafe(enIyi, a) - mesafe(enIyi, b));
     mekanlar = mekanlar.slice(0, 120);
 
     // 3) Her mekana herkesin tahmini süresi, ön sıralama
     durum(`${mekanlar.length} mekan için herkesin süresi hesaplanıyor…`);
     const sureler = await herkesinSuresi(hazir, mekanlar, toplu);
-    mekanlar.forEach((m, i) => { m.sureler = sureler[i].sure; m.mesafeler = sureler[i].mesafe; Object.assign(m, puanla(m.sureler) || { puan: Infinity }); });
+    mekanlar.forEach((m, i) => { m.sureler = sureler[i].sure; m.mesafeler = sureler[i].mesafe; m.puan = siralamaPuani(m); });
     mekanlar = mekanlar.filter((m) => isFinite(m.puan)).sort((a, b) => a.puan - b.puan);
     if (!mekanlar.length) throw new Error("Mekanlara herkesin ulaşabildiği yol bulunamadı.");
 
-    // 4) İlk 12 için toplu taşımacılara kesin yolculuk planı, kesin sürelerle yeniden sırala
+    // 4) İlk 12 için toplu taşımacılara kesin gidiş ve dönüş planı
     let ilk = mekanlar.slice(0, 12);
     if (topluKisiler.length) {
-      durum("En iyi mekanlar için toplu taşıma yol tarifleri çıkarılıyor…");
-      const isler = [];
+      durum("En iyi mekanlar için gidiş ve dönüş tarifleri çıkarılıyor…");
+      const isler = [], donusOnbellek = {};
       ilk.forEach((m) => {
-        m.rotalar = {};
+        m.rotalar = {}; m.donusler = {}; m.cezali = [...m.sureler];
         hazir.forEach((k, i) => {
           if (k.tur !== "transit") return;
           isler.push(async () => {
             const it = await topluRota(k, m, zaman).catch(() => null);
             m.rotalar[k.id] = it;
             m.sureler[i] = it ? it.duration : Infinity;
-            m.cezali = m.cezali || [...m.sureler];
             m.cezali[i] = it ? it.duration + ekMaliyet(it) : Infinity;
+          });
+          // Birbirine ~300 m yakın mekanların dönüşü neredeyse aynı: bölge başına bir kez sor
+          const anahtar = `${k.id}|${Math.round(m.lat / 0.003)}|${Math.round(m.lon / 0.004)}`;
+          isler.push(async () => {
+            donusOnbellek[anahtar] ??= donusRotasi(k, m, zaman, sureDk).catch(() => null);
+            m.donusler[k.id] = await donusOnbellek[anahtar];
           });
         });
       });
-      await sinirli(isler, 6);
+      await sinirli(isler, 8);
       ilk.forEach((m) => {
-        const p = puanla(m.cezali.map((s, i) => (hazir[i].tur === "transit" ? s : m.sureler[i])));
-        Object.assign(m, p ? { ...p, enUzun: Math.max(...m.sureler), fark: Math.max(...m.sureler) - Math.min(...m.sureler) } : { puan: Infinity });
+        m.aktarmaSayisi = Object.values(m.rotalar).reduce((t, it) => t + (it?.transfers || 0), 0);
+        m.donusYok = hazir.filter((k) => k.tur === "transit" && donusSorunlu(m.donusler[k.id], zaman, sureDk)).map((k) => k.ad);
       });
-      ilk = ilk.filter((m) => isFinite(m.puan)).sort((a, b) => a.puan - b.puan);
-      if (!ilk.length) throw new Error("Bu saatte toplu taşımayla herkesin ulaşabildiği mekan bulunamadı. Saati değiştirmeyi dene.");
     }
+    ilk.forEach(goruntuDegerleri);
+    ilk = ilk.filter((m) => isFinite(m.puan)).sort((a, b) => a.puan - b.puan);
+    if (!ilk.length) throw new Error("Bu saatte toplu taşımayla herkesin ulaşabildiği mekan bulunamadı. Saati değiştirmeyi dene.");
     ilk = ilk.slice(0, 10);
+    sonArama = { hazir, zaman, sureDk, ilk, toplu };
+    sonArama.yayilmaHazirlik = yayilmaHazirla(sonArama); // arka planda; "Yayılmayı izle" hemen oynasın
+    sonArama.yayilmaHazirlik.catch(() => { sonArama.yayilmaHazirlik = null; });
     sonuclariGoster(ilk, hazir, zaman);
-    durum(`${mekanlar.length} mekan değerlendirildi, en adil ${ilk.length} tanesi aşağıda (${((performance.now() - t0) / 1000).toFixed(0)} sn).`);
+    durum(`${mekanlar.length} mekan değerlendirildi${kapali ? `, ${kapali} kapalı mekan elendi` : ""}; en iyi ${ilk.length} tanesi aşağıda (${((performance.now() - t0) / 1000).toFixed(0)} sn).`);
     harita.fitBounds([...hazir.map((k) => [k.lat, k.lon]), ...ilk.map((m) => [m.lat, m.lon])], { padding: [40, 40] });
     mekanSec(ilk[0], hazir, 0, zaman);
+    if (matchMedia("(max-width: 760px)").matches) $("#sonucBolumu").scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (e) {
     console.error(e);
     durum(e.message.startsWith("HTTP") || e.name === "TypeError" || e.name === "TimeoutError"
-      ? "Harita servislerine ulaşılamadı (ücretsiz servisler yoğun olabilir). Birkaç saniye sonra tekrar dene."
+      ? "Harita servislerine ulaşılamadı. Birkaç saniye sonra tekrar dene."
       : e.message, true);
   } finally { btn.disabled = false; }
+}
+
+// Sıralama değişince yeniden hesaplamadan sırala
+function yenidenSirala() {
+  if (!sonArama) return;
+  const { ilk, hazir, zaman } = sonArama;
+  ilk.forEach(goruntuDegerleri);
+  ilk.sort((a, b) => a.puan - b.puan);
+  sonuclariGoster(ilk, hazir, zaman);
+  mekanSec(ilk[0], hazir, 0, zaman);
 }
 
 // ---------- Sonuç listesi ----------
@@ -666,18 +802,28 @@ function kisiOzeti(m, k, i) {
     : (m.mesafeler[i] != null ? km(m.mesafeler[i]) : "");
   return `<span><i class="nokta" style="background:${renk(k)}"></i>${TURLER[k.tur].ikon} ${esc(k.ad)}: <b>${dk(m.sureler[i])}</b>${ek ? ` · ${ek}` : ""}</span>`;
 }
+function acikRozeti(a) {
+  if (!a || a.durum === "bilinmiyor") return `<span class="rozet-k gri" title="Haritada açılış saati yok">saat bilgisi yok</span>`;
+  if (a.durum === "erken") return `<span class="rozet-k sari">⚠️ Buluşma bitmeden kapanıyor · kapanış ${a.kapanis}</span>`;
+  return `<span class="rozet-k yesil">✓ Açık${a.kapanis ? ` · kapanış ${a.kapanis}` : " · 24 saat"}</span>`;
+}
 
 function sonuclariGoster(liste, hazir, zaman) {
   const ol = $("#sonuclar"); ol.innerHTML = ""; pinler = [];
+  sonucKatmani.clearLayers();
   $("#sonucBolumu").hidden = false;
   liste.forEach((m, sira) => {
     const li = document.createElement("li"); li.className = "sonuc";
     const harita_url = `https://www.google.com/maps/search/?api=1&query=${m.lat},${m.lon}`;
+    const ucretler = hazir.map((k, i) => kisiUcreti(k, m, i));
+    const toplamTl = ucretler.reduce((t, u) => t + (u?.tl || 0), 0);
+    const tahmini = ucretler.some((u) => !u || u.tahmini);
     li.innerHTML = `
       <div class="ust"><span class="ad"></span><span class="tur"></span></div>
+      <div class="rozetler">${acikRozeti(m.acik)}${m.donusYok?.length ? `<span class="rozet-k kirmizi">🌙 ${esc(m.donusYok.join(", "))}: dönüş yok</span>` : (m.donusler ? `<span class="rozet-k yesil">🌙 Herkes dönebilir</span>` : "")}</div>
       <div class="mesafeler">${hazir.map((k, i) => kisiOzeti(m, k, i)).join("")}</div>
       ${m.adres ? `<div class="ozet">${esc(m.adres)}</div>` : ""}
-      <div class="ozet">En uzun yolculuk: ${dk(m.enUzun)} · Süre farkı: ${dk(m.fark)} · <a href="${harita_url}" target="_blank" rel="noopener">Haritada aç</a></div>
+      <div class="ozet">En uzun yolculuk: ${dk(m.enUzun)} · Süre farkı: ${dk(m.fark)} · Yol ücreti toplam ≈ ${Math.round(toplamTl)} TL${tahmini ? "+" : ""} · <a href="${harita_url}" target="_blank" rel="noopener">Haritada aç</a></div>
       <div class="tarifler" hidden></div>`;
     li.querySelector(".ad").textContent = m.ad;
     li.querySelector(".tur").textContent = m.tur;
@@ -689,21 +835,17 @@ function sonuclariGoster(liste, hazir, zaman) {
   });
 }
 
-// Adım adım tarif (HTML)
-function tarifHTML(k, m, i) {
-  const t = TURLER[k.tur];
-  const bas = `<div class="tarif-bas"><i class="nokta" style="background:${renk(k)}"></i><b>${esc(k.ad)}</b> · ${t.ikon} ${t.ad} · ${dk(m.sureler[i])}`;
-  if (k.tur !== "transit") {
-    return `<div class="tarif">${bas}${m.mesafeler[i] != null ? ` · ${km(m.mesafeler[i])}` : ""}</div>
-      <div class="adim">${k.tur === "car" ? "Trafiksiz tahmini süre. Park yeri ayrıca." : "Haritadaki yolu izle."}</div></div>`;
-  }
-  const it = m.rotalar?.[k.id];
-  if (!it) return `<div class="tarif">${bas}</div><div class="adim">Bu saatte toplu taşıma rotası bulunamadı.</div></div>`;
-  const adimlar = it.legs.map((l) => {
+// Toplu taşıma yolculuğunun adımları (gidiş ya da dönüş)
+function adimlarHTML(it) {
+  return it.legs.map((l, n) => {
     const h = hatTuru(l);
     if (l.mode === "WALK") {
       if (l.duration < 60 && l.to.name !== "END") return "";
-      return `<li class="adim yuru">🚶 ${dk(l.duration)} yürü → ${esc(yerAdi(l.to))}</li>`;
+      const sonraki = it.legs[n + 1], onceki = it.legs[n - 1];
+      let giris = "";
+      if (sonraki && RAYLI.has(hatTuru(sonraki).ad)) { const g = enYakinGiris(l.to, l.from); if (g) giris = ` <span class="giris">· en yakın giriş${girisAdi(g) ? `: ${esc(girisAdi(g))}` : " haritada M ile işaretli"}</span>`; }
+      else if (onceki && RAYLI.has(hatTuru(onceki).ad)) { const g = enYakinGiris(l.from, l.to); if (g) giris = ` <span class="giris">· en yakın çıkış${girisAdi(g) ? `: ${esc(girisAdi(g))}` : " haritada M ile işaretli"}</span>`; }
+      return `<li class="adim yuru">🚶 ${dk(l.duration)} yürü → ${esc(yerAdi(l.to))}${giris}</li>`;
     }
     const durak = (l.intermediateStops?.length || 0) + 1;
     const hat = l.routeShortName || l.displayName || "";
@@ -713,7 +855,27 @@ function tarifHTML(k, m, i) {
       <div>İn: <b>${esc(yerAdi(l.to))}</b> · ${saatYaz(l.endTime)} · ${durak} durak</div>
       ${tarifesiz(l) ? `<div class="not">Sabit saati yok, saatler tahmini. Birkaç dakika fazla bekleyebilirsin.</div>` : ""}</li>`;
   }).join("");
-  return `<div class="tarif">${bas} · Çıkış ${saatYaz(it.startTime)}, varış ${saatYaz(it.endTime)}</div><ol class="adimlar">${adimlar}</ol></div>`;
+}
+
+// Adım adım tarif (HTML)
+function tarifHTML(k, m, i) {
+  const t = TURLER[k.tur];
+  const u = kisiUcreti(k, m, i);
+  const bas = `<div class="tarif-bas"><i class="nokta" style="background:${renk(k)}"></i><b>${esc(k.ad)}</b> · ${t.ikon} ${t.ad} · ${dk(m.sureler[i])}${u ? ` · ${tlYaz(u)}${u.yakit ? " yakıt" : ""}` : ""}`;
+  if (k.tur !== "transit") {
+    return `<div class="tarif">${bas}${m.mesafeler[i] != null ? ` · ${km(m.mesafeler[i])}` : ""}</div>
+      <div class="adim">${k.tur === "car" ? "Trafiksiz tahmini süre. Köprü, otopark ayrıca." : "Haritadaki yolu izle."}</div></div>`;
+  }
+  const it = m.rotalar?.[k.id];
+  if (!it) return `<div class="tarif">${bas}</div><div class="adim">Bu saatte toplu taşıma rotası bulunamadı.</div></div>`;
+  let donus = "";
+  if (m.donusler) {
+    const d = m.donusler[k.id], ss = sonArama?.sureDk ?? 120;
+    donus = donusSorunlu(d, sonArama?.zaman ?? "", ss)
+      ? `<div class="donus kotu">🌙 Dönüş: ${d ? `ilk toplu taşıma çıkışı ${saatYaz(d.startTime)}, uzun bekleme var` : "buluşma bitince 3 saat içinde toplu taşımayla dönüş yok"}. Taksi ya da araba düşün.</div>`
+      : `<details class="donus"><summary>🌙 Dönüş: çıkış ${saatYaz(d.startTime)}, eve varış ${saatYaz(d.endTime)} (${dk(d.duration)})</summary><ol class="adimlar">${adimlarHTML(d)}</ol></details>`;
+  }
+  return `<div class="tarif">${bas} · Çıkış ${saatYaz(it.startTime)}, varış ${saatYaz(it.endTime)}</div><ol class="adimlar">${adimlarHTML(it)}</ol>${donus}</div>`;
 }
 
 // Seçilen mekana herkesin rotasını çizer, tarifleri açar.
@@ -729,21 +891,19 @@ async function mekanSec(m, hazir, sira, zaman) {
   pinler.forEach((p, i) => p.setIcon(L.divIcon({ className: "", html: `<div class="mekan-pin${i === sira ? " secili" : ""}"></div>`, iconSize: i === sira ? [22, 22] : [14, 14], iconAnchor: i === sira ? [11, 11] : [7, 7] })));
   pinler[sira]?.setZIndexOffset(1000).openTooltip();
 
-  // Araba/yürüyüş/bisiklet rotaları (bir kez alınır)
   m.yollar ??= {};
   await Promise.all(hazir.map(async (k, i) => {
     if (k.tur === "transit" || m.yollar[k.id]) return;
     m.yollar[k.id] = await sokakRotasi(k, m, zaman);
     if (m.mesafeler[i] == null) m.mesafeler[i] = m.yollar[k.id].mesafe;
   }));
-  // Toplu taşımacının rotası henüz yoksa (ilk 12 dışı nadir durum) şimdi al
-  await Promise.all(hazir.map(async (k, i) => {
+  await Promise.all(hazir.map(async (k) => {
     if (k.tur !== "transit" || m.rotalar?.[k.id] !== undefined) return;
     (m.rotalar ??= {})[k.id] = await topluRota(k, m, zaman).catch(() => null);
   }));
   if (no !== secimNo) return;
   const kart = document.querySelectorAll(".sonuc")[sira];
-  if (kart) kart.querySelector(".tarifler").innerHTML = hazir.map((k, j) => tarifHTML(k, m, j)).join(""); // mesafeler artık belli
+  if (kart) kart.querySelector(".tarifler").innerHTML = hazir.map((k, j) => tarifHTML(k, m, j)).join(""); // mesafe ve ücret artık belli
 
   hazir.forEach((k) => {
     const r = renk(k);
@@ -755,11 +915,16 @@ async function mekanSec(m, hazir, sira, zaman) {
     }
     const it = m.rotalar?.[k.id];
     if (!it) return;
-    for (const l of it.legs) {
+    it.legs.forEach((l, n) => {
       const nokta = l.legGeometry?.points ? cizgiCoz(l.legGeometry.points, l.legGeometry.precision || 7) : [[l.from.lat, l.from.lon], [l.to.lat, l.to.lon]];
       const h = hatTuru(l);
       if (l.mode === "WALK") {
         L.polyline(nokta, { color: r, weight: 3, opacity: 0.9, dashArray: "2 7", lineCap: "round" }).addTo(cizgiKatmani);
+        const sonraki = it.legs[n + 1], onceki = it.legs[n - 1];
+        const g = sonraki && RAYLI.has(hatTuru(sonraki).ad) ? enYakinGiris(l.to, l.from)
+          : onceki && RAYLI.has(hatTuru(onceki).ad) ? enYakinGiris(l.from, l.to) : null;
+        if (g) L.marker([g.lat, g.lon], { icon: L.divIcon({ className: "", html: `<div class="giris-pin">M</div>`, iconSize: [16, 16], iconAnchor: [8, 8] }), zIndexOffset: -1000 })
+          .bindTooltip(`İstasyon girişi${girisAdi(g) ? `: ${esc(girisAdi(g))}` : ""}`).addTo(cizgiKatmani);
       } else {
         L.polyline(nokta, { color: r, weight: 12, opacity: 0.25, lineCap: "round" }).addTo(cizgiKatmani);
         L.polyline(nokta, { color: h.renk, weight: 5, opacity: 0.95, lineCap: "round" })
@@ -767,13 +932,85 @@ async function mekanSec(m, hazir, sira, zaman) {
         L.circleMarker([l.from.lat, l.from.lon], { radius: 4, color: h.renk, fillColor: "#fff", fillOpacity: 1, weight: 2 })
           .bindTooltip(`Bin: ${esc(l.from.name)} · ${saatYaz(l.startTime)}`).addTo(cizgiKatmani);
       }
-    }
+    });
   });
+}
+
+// ---------- Yayılma animasyonu (videodaki "herkesten aynı anda yayılan arama") ----------
+const yayilmaKatmani = L.layerGroup().addTo(harita);
+const tuval = L.canvas({ padding: 0.3 });
+const SaatKutusu = L.Control.extend({
+  options: { position: "bottomleft" },
+  onAdd() { this.el = L.DomUtil.create("div", "saat-kutusu"); this.el.hidden = true; return this.el; },
+});
+const saatKutusu = new SaatKutusu().addTo(harita);
+
+// Kişi başı "ne zaman nereye varır" noktaları: toplu taşımacı için duraklar, diğerleri için ızgaraya sokak süresi
+async function yayilmaHazirla(d) {
+  const hedef = d.ilk[0];
+  const sinirKutu = L.latLngBounds([...d.hazir.map((k) => [k.lat, k.lon]), [hedef.lat, hedef.lon]]).pad(0.15);
+  const izgara = [], n = 20;
+  for (let i = 0; i <= n; i++) for (let j = 0; j <= n; j++) {
+    izgara.push({ lat: sinirKutu.getSouth() + (sinirKutu.getNorth() - sinirKutu.getSouth()) * i / n, lon: sinirKutu.getWest() + (sinirKutu.getEast() - sinirKutu.getWest()) * j / n });
+  }
+  const kisiler_ = await Promise.all(d.hazir.map(async (k) => {
+    let liste;
+    if (k.tur === "transit") liste = d.toplu.get(k.id).noktalar.filter((p) => sinirKutu.contains([p.lat, p.lon]));
+    else { const s = await sokakSureleri(k, izgara); liste = izgara.map((p, i) => ({ ...p, sure: s[i] })); }
+    return liste.filter((p) => isFinite(p.sure)).sort((a, b) => a.sure - b.sure);
+  }));
+  return { sinirKutu, kisiler: kisiler_ };
+}
+
+async function yayilmaOynat() {
+  const d = sonArama;
+  if (!d) return durum("Önce \"Buluşma yeri bul\" ile bir arama yap.", true);
+  const btn = $("#yayilma"); btn.disabled = true;
+  try {
+    yayilmaKatmani.clearLayers(); cizgiKatmani.clearLayers();
+    const hedef = d.ilk[0];
+    const sinir = Math.max(...d.ilk.map((m) => Math.max(...m.sureler))) * 1.1;
+    // Kişi başı noktalar: toplu taşımacı için duraklar, diğerleri için ızgara noktalarına sokak süresi
+    durum("Yayılma hazırlanıyor…");
+    const { sinirKutu, kisiler: hazirNoktalar } = await (d.yayilmaHazirlik ??= yayilmaHazirla(d));
+    const kisiNoktalari = hazirNoktalar.map((liste) => liste.filter((p) => p.sure <= sinir));
+    durum("Herkes aynı anda yola çıkıyor: renkler, o kişinin o sürede ulaşabildiği yerler.");
+    harita.fitBounds(sinirKutu);
+    saatKutusu.el.hidden = false;
+    const SURE_MS = 7000, basla = performance.now(), isaret = d.hazir.map(() => 0);
+    await new Promise((bitti) => {
+      // requestAnimationFrame arka plan sekmesinde durur; zamanlayıcı her durumda ilerler
+      const kare = () => {
+        const oran = Math.min(1, (performance.now() - basla) / SURE_MS), t = sinir * oran;
+        kisiNoktalari.forEach((liste, ki) => {
+          const r = renk(d.hazir[ki]);
+          while (isaret[ki] < liste.length && liste[isaret[ki]].sure <= t) {
+            const p = liste[isaret[ki]++];
+            const topluMu = d.hazir[ki].tur === "transit"; // duraklar küçük ve belirgin; sokak ızgarası iri ama saydam (öbürlerini örtmesin)
+            L.circleMarker([p.lat, p.lon], { renderer: tuval, radius: topluMu ? 2.5 : 5, stroke: false, fillColor: r, fillOpacity: topluMu ? 0.65 : 0.22, interactive: false }).addTo(yayilmaKatmani);
+          }
+        });
+        saatKutusu.el.textContent = `⏱ ${Math.round(t / 60)} dk`;
+        if (oran < 1) setTimeout(kare, 30); else bitti();
+      };
+      kare();
+    });
+    saatKutusu.el.textContent = `📍 ${hedef.ad}: en uzun yolculuk ${dk(hedef.enUzun)}`;
+    await new Promise((r) => setTimeout(r, 1200));
+    mekanSec(hedef, d.hazir, 0, d.zaman);
+    setTimeout(() => { yayilmaKatmani.clearLayers(); saatKutusu.el.hidden = true; }, 4000);
+    durum("");
+  } catch (e) {
+    console.error(e);
+    durum("Yayılma gösterilemedi: toplu taşıma sunucusuna ulaşılamadı.", true);
+  } finally { btn.disabled = false; }
 }
 
 // ---------- Başlat ----------
 $("#kisiEkle").addEventListener("click", () => kisiEkle());
 $("#bul").addEventListener("click", bul);
+$("#yayilma").addEventListener("click", yayilmaOynat);
+$("#siralama").addEventListener("change", yenidenSirala);
 $("#paylas").addEventListener("click", async () => {
   kaydet();
   try { await navigator.clipboard.writeText(location.href); durum("Bağlantı kopyalandı. Gruba at, herkes kendi konumunu ekleyip geri göndersin."); }

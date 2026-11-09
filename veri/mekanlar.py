@@ -3,7 +3,7 @@
 Kullanım: python veri/mekanlar.py   (önce veri/indir.py)
 Gerekli: pip install osmium
 Çıktı : mekanlar.json (site kökünde; tarayıcı doğrudan okur)
-Biçim : {"turler": [...], "m": [[lat, lon, ad, tur_no, adres], ...]}
+Biçim : {"turler": [...], "m": [[lat, lon, ad, tur_no, adres, acilis_saatleri], ...]}  (saat yoksa "")
 """
 import json
 import pathlib
@@ -13,6 +13,7 @@ import osmium
 KOK = pathlib.Path(__file__).resolve().parent
 GIRDI = KOK / "indirilen" / "Istanbul.osm.pbf"
 CIKTI = KOK.parent / "mekanlar.json"
+GIRIS_CIKTI = KOK.parent / "girisler.json"  # metro/tren istasyonu girişleri: [[lat, lon, ad, ref], ...]
 
 # OSM etiketi -> sitedeki tür kodu (app.js'deki KATEGORI ile aynı aileler)
 ETIKET = {
@@ -43,12 +44,15 @@ def adres(etiketler):
 
 
 def main():
-    mekanlar, gorulen = [], set()
-    isleyici = osmium.FileProcessor(str(GIRDI)).with_locations().with_filter(osmium.filter.KeyFilter("amenity", "leisure"))
+    mekanlar, gorulen, girisler = [], set(), []
+    isleyici = osmium.FileProcessor(str(GIRDI)).with_locations().with_filter(osmium.filter.KeyFilter("amenity", "leisure", "railway"))
     for nesne in isleyici:
         if nesne.is_relation():
             continue
         etiketler = {t.k: t.v for t in nesne.tags}
+        if nesne.is_node() and etiketler.get("railway") in ("subway_entrance", "train_station_entrance"):
+            girisler.append([round(nesne.location.lat, 6), round(nesne.location.lon, 6), etiketler.get("name", ""), etiketler.get("ref", "")])
+            continue
         tur, ad = tur_bul(etiketler), etiketler.get("name:tr") or etiketler.get("name")
         if not tur or not ad:
             continue
@@ -63,11 +67,14 @@ def main():
         if anahtar in gorulen:
             continue
         gorulen.add(anahtar)
-        mekanlar.append([round(lat, 6), round(lon, 6), ad, TUR_NO[tur], adres(etiketler)])
+        mekanlar.append([round(lat, 6), round(lon, 6), ad, TUR_NO[tur], adres(etiketler), etiketler.get("opening_hours", "")])
     CIKTI.write_text(json.dumps({"turler": TURLER, "m": mekanlar}, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     sayim = {t: sum(1 for m in mekanlar if TURLER[m[3]] == t) for t in TURLER}
     print(f"{len(mekanlar):,} mekan -> {CIKTI.name} ({CIKTI.stat().st_size / 1e6:.1f} MB)")
     print(sayim)
+    print(f"açılış saati olan: {sum(1 for m in mekanlar if m[5]):,}")
+    GIRIS_CIKTI.write_text(json.dumps(girisler, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    print(f"{len(girisler)} istasyon girişi -> {GIRIS_CIKTI.name}")
 
 
 if __name__ == "__main__":

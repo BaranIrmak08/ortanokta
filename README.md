@@ -16,6 +16,14 @@ Arkadaş grubunun hepsine aşağı yukarı eşit uzaklıkta buluşma mekanı bul
 
 Herkes kendi ulaşımını seçer, hesap buluşma saatine göre yapılır. Toplu taşımada adım adım tarif verilir. Sınırlar: araba süreleri trafiksizdir; raylı sistem ve vapur tarifeleri İBB'nin 2024 verisinden.
 
+## Özellikler
+- Herkes kendi ulaşımını seçer (toplu taşıma, araba, yürüyüş, bisiklet); toplu taşımada adım adım tarif, en yakın istasyon girişi
+- Buluşma saati ve kalış süresi: o saatte kapalı mekanlar elenir, buluşma bitmeden kapananlar işaretlenir (OSM açılış saatleri, mekanların ~%12'sinde var)
+- Dönüş yolu: buluşma bitince herkesin toplu taşımayla eve dönüşü; dönüşü olmayan kişi uyarılır, o mekan aşağı iner
+- Sıralama: en adil / toplam süre / en az aktarma
+- Yaklaşık ücret: İstanbulkart (Temmuz 2026 tarifesi), Marmaray mesafeye göre, araba yakıtı
+- "Yayılmayı izle": herkesten aynı anda yayılan erişim animasyonu; koyu harita
+
 ## Altyapı
 Site statik (HTML/CSS/JS), API anahtarı yok. Hesap için kendi MOTIS sunucumuz gerekiyor.
 - Toplu taşıma, araba, yürüyüş, bisiklet: MOTIS + İBB Açık Veri (İETT GTFS ve Toplu Ulaşım GTFS) + İstanbul OSM
@@ -30,4 +38,8 @@ Site statik (HTML/CSS/JS), API anahtarı yok. Hesap için kendi MOTIS sunucumuz 
 3. `pip install osmium` ve `python veri/mekanlar.py` — İstanbul haritasından mekanları çıkarır (`mekanlar.json`).
 4. MOTIS v2.11.4 Windows sürümünü `motis/` klasörüne aç, `veri/motis-config.yml` dosyasını `motis/config.yml` olarak kopyala, `motis.exe import` çalıştır.
 
-Sonra her seferinde: `baslat.bat` (MOTIS sunucusu + site, http://localhost:5173).
+Sonra her seferinde: `baslat.bat` (MOTIS sunucusu + `sunucu.py`, http://localhost:5173).
+
+**Telefondan (aynı Wi-Fi):** `sunucu.py` açılınca yazdığı `https://<bilgisayar-IP>:5443` adresini telefonda aç. Sertifika kendinden imzalı olduğu için bir kez "Gelişmiş → yine de devam et" de. Windows güvenlik duvarı Python için izin sorarsa "Özel ağ"a izin ver.
+
+Testler: `node test/saatler.test.js`

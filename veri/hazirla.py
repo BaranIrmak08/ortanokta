@@ -216,7 +216,7 @@ AKTARMA_EN_AZ = 240     # sn
 AKTARMA_PAY = 180       # sn: derin peron (Marmaray ~60 m), yürüyen merdiven, turnike
 
 
-def aktarmalar_yaz(z, satirlar, trips, konum, klasor):
+def aktarmalar_yaz(z, satirlar, trips, konum, klasor, stops):
     """Raylı istasyonlar arası aktarma süreleri (transfers.txt).
     Veride aynı istasyonun hatları ayrı durak (ör. Yenikapı: Marmaray, M1, M2). Varsayılan 2 dk
     gerçekçi değil; yürüme mesafesi x dolambaç / hız + peron payı (3 dk), en az 4 dk."""
@@ -240,7 +240,6 @@ def ibb():
     print("[İBB raylı sistem, vapur, minibüs, dolmuş]")
     with zipfile.ZipFile(CIKTI / "ibb.gtfs.zip", "w", zipfile.ZIP_DEFLATED) as z:
         stops = [s for s in oku(k / "stops.csv") if s["stop_lat"] and istanbulda(float(s["stop_lat"]), float(s["stop_lon"]))]
-        yaz(z, "stops.txt", stops, ["stop_id", "stop_code", "stop_name", "stop_lat", "stop_lon", "location_type", "parent_station", "wheelchair_boarding"])
         konum = {s["stop_id"]: (float(s["stop_lat"]), float(s["stop_lon"])) for s in stops}
         trips = ortak_duzelt(z, k, stops)
         frekans = {}
@@ -248,7 +247,8 @@ def ibb():
             frekans.setdefault(f["trip_id"], []).append((sn(f["start_time"]), sn(f["end_time"]), max(60, int(f["headway_secs"]))))
         satirlar = sorted(oku(k / "stop_times.csv"), key=lambda s: s["trip_id"])
         stop_times_yaz(z, satirlar, trips, konum, frekans)
-        aktarmalar_yaz(z, satirlar, trips, konum, k)
+        aktarmalar_yaz(z, satirlar, trips, konum, k, stops)
+        yaz(z, "stops.txt", stops, ["stop_id", "stop_code", "stop_name", "stop_lat", "stop_lon", "location_type", "parent_station", "wheelchair_boarding"])
         shapes = oku(k / "shapes.csv")
         yaz(z, "shapes.txt", shapes, ["shape_id", "shape_pt_lat", "shape_pt_lon", "shape_pt_sequence"])
 

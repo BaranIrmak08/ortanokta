@@ -130,3 +130,48 @@ button.ikincil { width: 100%; margin-top: 8px; font-size: 14px; }
 .oneriler li small { color: var(--soluk); font-size: 11px; border: 1px solid var(--cizgi); border-radius: 4px; padding: 0 4px; }
 .oneriler li.bos { color: var(--soluk); cursor: default; }
 .kisi .konum-yazi { white-space: normal; }
+
+/* Buluşma süresi ve sıralama */
+.zaman-satir { display: flex; gap: 8px; align-items: center; }
+.zaman-satir .zaman { flex: 1; min-width: 0; }
+.sure, .siralama { font-size: 13px; color: var(--soluk); display: flex; gap: 6px; align-items: center; }
+.siralama { margin: 4px 0 10px; }
+.sure select, .siralama select { font: inherit; color: var(--yazi); padding: 7px 8px; border: 1px solid var(--cizgi); border-radius: 10px; background: #fff; }
+
+/* Rozetler: açık mı, dönüş */
+.rozetler { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.rozet-k { font-size: 11.5px; padding: 2px 8px; border-radius: 999px; border: 1px solid transparent; }
+.rozet-k.yesil { background: #e6f5ee; color: #1d6f4f; }
+.rozet-k.sari { background: #fff4d6; color: #8a6100; }
+.rozet-k.kirmizi { background: #fde8e4; color: #a3321b; }
+.rozet-k.gri { background: #f0eeea; color: var(--soluk); }
+.donus { margin-top: 6px; font-size: 13px; }
+.donus summary { cursor: pointer; color: var(--yazi); }
+.donus.kotu { color: #a3321b; }
+.giris { color: var(--soluk); font-size: 12px; }
+.giris-pin { width: 16px; height: 16px; border-radius: 4px; background: #d62828; color: #fff; font: 700 10px/16px system-ui; text-align: center; border: 1.5px solid #fff; box-shadow: 0 1px 3px rgba(0,0,0,.4); }
+
+/* Harita üstü düğme ve sayaç */
+.tema-dugme { font: 600 13px system-ui; padding: 6px 10px; border-radius: 8px; border: 1px solid rgba(0,0,0,.2); background: #fff; color: #1d1d1f; cursor: pointer; box-shadow: 0 1px 4px rgba(0,0,0,.2); }
+.saat-kutusu { font: 700 15px system-ui; padding: 8px 12px; border-radius: 10px; background: rgba(20,20,24,.85); color: #fff; }
+body.koyu-harita .leaflet-tooltip { background: #222; color: #eee; border-color: #444; }
+
+/* Telefon */
+@media (max-width: 760px) {
+  #harita { height: 45vh; position: sticky; top: 0; z-index: 5; }
+  #panel { padding: 14px 12px 60px; }
+  h1 { font-size: 22px; }
+  .kisi input, .zaman, select { font-size: 16px; }   /* iOS yakınlaştırmasın */
+  .kisi { grid-template-columns: 26px 1fr auto; padding: 8px; }
+  .tur-secim button { padding: 6px 10px; }
+  .tur-secim button span { display: none; }
+  .tur-secim button { font-size: 18px; }
+  .cipler button { padding: 8px 14px; }
+  button.ana { padding: 14px; }
+  .sonuc { padding: 10px; }
+  .sonuc .mesafeler { flex-direction: column; gap: 2px; }
+  .adimlar { padding-left: 8px; }
+  .zaman-satir { flex-wrap: wrap; }
+}
+body.koyu-harita .leaflet-layer.zemin { filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(0.9) saturate(0.6); }
+body.koyu-harita #harita { background: #1b1b1e; }

@@ -215,6 +215,18 @@ Ortalama mutlak fark yaklaşık 6–7 dk. 5 rotanın 4'ü ±10 dk hedefinin içi
 - **Mekanlar artık kendi verimizden:** `veri/mekanlar.py`, İstanbul OSM'den 10.610 mekan çıkarıp `mekanlar.json` dosyasına yazıyor (0,6 MB, sıkıştırılmış 0,2 MB). Sebebi: Photon çok istekte engelledi, Overpass zaman aşımına düştü. Dış servisler yalnız yedek.
 - **MOTIS adres araması:** Sıralaması zayıf ("Moda caddesi" için önce başka semtte bir otobüs durağını getiriyor). Bu yüzden yalnız yedek olarak kullanılıyor.
 
+## 8g. Yerel geliştirmeler (9 Kas gece) — kullanıcı "yedisini de yap" dedi
+
+1. **Açık mı:** `veri/mekanlar.py` OSM `opening_hours` alanını da yazıyor. `saatler.js` bunu çözüyor ve testleri var (`test/saatler.test.js`). Saati olan mekanların %98'i çözülebiliyor; ama saat bilgisi mekanların yalnız %12'sinde var. Kapalı mekan eleniyor, buluşma bitmeden kapanana +20 dk ceza.
+2. **Dönüş yolu:** Kalış süresi seçiliyor. Buluşma bitince herkesin eve dönüş planı hesaplanıyor (yakın mekanlar ~300 m bölge başına bir sorguyu paylaşıyor). Dönüşü yoksa ya da 1 saatten fazla bekleme varsa kişi başı +60 dk ceza ve uyarı.
+3. **Telefon:** `sunucu.py` siteyi sunuyor, `/motis` isteklerini MOTIS'e aktarıyor, telefon için kendinden imzalı HTTPS açıyor (5443; konum izni için gerekli). Telefon görünümünde harita üstte sabit. TUZAK: Windows'ta `localhost` önce IPv6 deniyor, her istek ~2 sn gecikti; `127.0.0.1` kullan.
+4. **Sıralama:** en adil, toplam süre, en az aktarma (aktarma başına +15 dk). Değişince yeniden hesap yapmadan sıralıyor.
+5. **Ücret:** Tam biniş 46,20, aktarma 34,40, Marmaray 37,40–82,17 mesafeye göre, benzin 74,5 TL/L ve 7 L/100 km. Minibüs ve dolmuş "+" ile belirsiz. Değerler `app.js` içindeki `UCRET` sabitinde.
+6. **İstasyon girişleri:** Önce MOTIS'e giriş durakları eklendi; motor yolcuyu yine perona doğrudan yürüttüğü için etkisi olmadı ve geri alındı. Bunun yerine `girisler.json` (524 giriş) dosyasından tarifte en yakın giriş ya da çıkış gösteriliyor ve haritada "M" ile işaretleniyor.
+7. **Yayılma ve koyu harita:** Toplu taşımacılar için `one-to-all` durakları, diğerleri için 21×21 ızgarada sokak süreleri kullanılıyor. Arama biter bitmez arka planda hazırlanıyor, 8 sn'lik animasyonla oynuyor. Koyu harita CSS filtresiyle yapılıyor; CARTO'nun koyu karoları artık API anahtarı istiyor.
+
+Ölçüm (Salı 19:00, 4 kişi, karışık ulaşım): arama 4,8 sn, animasyon basınca 0,4 sn'de başlıyor. Cuma 21:00 ile 3 saat kalış (gece dönüşü) daha yavaş, gece aramaları uzun sürüyor.
+
 ## 9. Aşamalar
 
 | # | İş | Bitti sayılır |
