@@ -210,6 +210,31 @@ def iett():
             stop_times_yaz(z, okuyucu, trips, konum)
 
 
+RAYLI_TUR = {"0", "1", "2", "6", "7"}  # tramvay, metro/Marmaray, tren, teleferik, füniküler
+AKTARMA_YARICAP = 700   # m: bu kadar yakın raylı duraklar aynı aktarma merkezi sayılır
+AKTARMA_EN_AZ = 240     # sn
+AKTARMA_PAY = 180       # sn: derin peron (Marmaray ~60 m), yürüyen merdiven, turnike
+
+
+def aktarmalar_yaz(z, satirlar, trips, konum, klasor):
+    """Raylı istasyonlar arası aktarma süreleri (transfers.txt).
+    Veride aynı istasyonun hatları ayrı durak (ör. Yenikapı: Marmaray, M1, M2). Varsayılan 2 dk
+    gerçekçi değil; yürüme mesafesi x dolambaç / hız + peron payı (3 dk), en az 4 dk."""
+    rota_turu = {r["route_id"]: r["route_type"] for r in oku(klasor / "routes.csv")}
+    trip_turu = {t["trip_id"]: TUR_DUZELT.get(rota_turu.get(t["route_id"]), rota_turu.get(t["route_id"])) for t in trips}
+    rayli = sorted({s["stop_id"] for s in satirlar if trip_turu.get(s["trip_id"]) in RAYLI_TUR and s["stop_id"] in konum})
+    aktarma = []
+    for i, a in enumerate(rayli):
+        aktarma.append({"from_stop_id": a, "to_stop_id": a, "transfer_type": "2", "min_transfer_time": "180"})
+        for b in rayli[i + 1:]:
+            m = mesafe(konum[a], konum[b])
+            if m <= AKTARMA_YARICAP:
+                sure = str(round(max(AKTARMA_EN_AZ, m * 1.3 / 1.2 + AKTARMA_PAY)))
+                aktarma += [{"from_stop_id": a, "to_stop_id": b, "transfer_type": "2", "min_transfer_time": sure},
+                            {"from_stop_id": b, "to_stop_id": a, "transfer_type": "2", "min_transfer_time": sure}]
+    yaz(z, "transfers.txt", aktarma)
+
+
 def ibb():
     k = GIRDI / "ibb"
     print("[İBB raylı sistem, vapur, minibüs, dolmuş]")
@@ -223,6 +248,7 @@ def ibb():
             frekans.setdefault(f["trip_id"], []).append((sn(f["start_time"]), sn(f["end_time"]), max(60, int(f["headway_secs"]))))
         satirlar = sorted(oku(k / "stop_times.csv"), key=lambda s: s["trip_id"])
         stop_times_yaz(z, satirlar, trips, konum, frekans)
+        aktarmalar_yaz(z, satirlar, trips, konum, k)
         shapes = oku(k / "shapes.csv")
         yaz(z, "shapes.txt", shapes, ["shape_id", "shape_pt_lat", "shape_pt_lon", "shape_pt_sequence"])
 

@@ -15,7 +15,7 @@ timetable:
   incremental_rt_update: false
   extend_missing_footpaths: false
   max_footpath_length: 10
-  default_transfer_time: 2
+  default_transfer_time: 3
   max_matching_distance: 25.000000
   preprocess_max_matching_distance: 250.000000
   datasets:
@@ -45,8 +45,8 @@ timetable:
         RIDESHARING: false
 elevators: false
 street_routing: true
-osr_footpath: false
-geocoding: false
-reverse_geocoding: false
+osr_footpath: true
+geocoding: true
+reverse_geocoding: true
 limits:
   onetoall_max_travel_minutes: 150

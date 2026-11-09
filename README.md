@@ -20,12 +20,14 @@ Herkes kendi ulaşımını seçer, hesap buluşma saatine göre yapılır. Toplu
 Site statik (HTML/CSS/JS), API anahtarı yok. Hesap için kendi MOTIS sunucumuz gerekiyor.
 - Toplu taşıma, araba, yürüyüş, bisiklet: MOTIS + İBB Açık Veri (İETT GTFS ve Toplu Ulaşım GTFS) + İstanbul OSM
 - Yedek yol servisi: OSRM (routing.openstreetmap.de, router.project-osrm.org)
-- Harita: Leaflet + OpenStreetMap · Adres: Nominatim · Mekanlar: Photon (yedek Overpass)
+- Mekanlar: kendi `mekanlar.json` dosyamız (OSM'den, 10.610 mekan), yedek Photon/Overpass
+- Adres önerisi: Photon, yedek MOTIS · Harita: Leaflet + OpenStreetMap
 
 ## Yerelde çalıştırmak
 İlk kurulum (bir kez):
 1. `python veri/indir.py` — İBB toplu taşıma verisi ve İstanbul haritası.
 2. `python veri/hazirla.py` — verideki bozuklukları düzeltir.
-3. MOTIS v2.11.4 Windows sürümünü `motis/` klasörüne aç, `veri/motis-config.yml` dosyasını `motis/config.yml` olarak kopyala, `motis.exe import` çalıştır.
+3. `pip install osmium` ve `python veri/mekanlar.py` — İstanbul haritasından mekanları çıkarır (`mekanlar.json`).
+4. MOTIS v2.11.4 Windows sürümünü `motis/` klasörüne aç, `veri/motis-config.yml` dosyasını `motis/config.yml` olarak kopyala, `motis.exe import` çalıştır.
 
 Sonra her seferinde: `baslat.bat` (MOTIS sunucusu + site, http://localhost:5173).

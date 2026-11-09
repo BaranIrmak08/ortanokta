@@ -54,7 +54,7 @@ const cizgiKatmani = L.layerGroup().addTo(harita);
 harita.on("click", async (e) => {
   const k = kisiler.find((x) => x.id === aktifId) || kisiler.find((x) => x.lat == null);
   if (!k) return durum("Önce bir kişi seç ya da yeni kişi ekle.");
-  k.lat = e.latlng.lat; k.lon = e.latlng.lng; k.adres = "Haritadan seçildi";
+  k.lat = e.latlng.lat; k.lon = e.latlng.lng; k.adres = "Haritadan seçildi"; k.yazilan = ""; k.genel = false;
   ciz();
   k.adres = (await tersAdres(k.lat, k.lon)) || k.adres;
   ciz();
@@ -114,10 +114,115 @@ function cizgiCoz(metin, hassasiyet = 7) {
 }
 
 // ---------- Adres ----------
+// Yazarken öneri: Photon (otomatik tamamlamaya izin veriyor), İstanbul çevresiyle sınırlı.
+const ISTANBUL_KUTU = "27.9,40.75,29.95,41.6";
+const GENEL_YER = new Set(["city", "town", "suburb", "district", "quarter", "neighbourhood", "borough", "village", "county", "state", "province"]);
+async function oneriGetir(metin, adet = 6) {
+  try { return await photonOneri(metin, adet); }
+  catch (e) { console.warn("Photon öneri vermedi, MOTIS adres araması deneniyor", e); }
+  // Yedek: kendi MOTIS sunucumuz (aynı İstanbul haritası; sıralaması Photon kadar iyi değil)
+  const j = await getJSON(`${MOTIS}/api/v1/geocode?text=${encodeURIComponent(metin)}&language=tr`, { signal: AbortSignal.timeout(8000) });
+  return (Array.isArray(j) ? j : []).slice(0, adet).map((x) => {
+    const bolge = (x.areas || []).filter((a) => a.adminLevel >= 6).map((a) => a.name).slice(0, 2);
+    const sokak = x.street ? x.street + (x.houseNumber ? " " + x.houseNumber : "") : "";
+    return { lat: x.lat, lon: x.lon, ad: [x.name, sokak !== x.name ? sokak : "", ...bolge].filter(Boolean).join(", "), genel: false };
+  });
+}
+async function photonOneri(metin, adet) {
+  const j = await getJSON(`https://photon.komoot.io/api/?q=${encodeURIComponent(metin)}&limit=${adet}&lat=41.01&lon=28.98&bbox=${ISTANBUL_KUTU}`,
+    { signal: AbortSignal.timeout(8000) });
+  return j.features.map((f) => {
+    const p = f.properties;
+    const sokak = p.street ? p.street + (p.housenumber ? " " + p.housenumber : "") : "";
+    const yer = [p.district || p.locality, p.city].filter((x, i, a) => x && a.indexOf(x) === i && x !== p.name);
+    return {
+      lat: f.geometry.coordinates[1], lon: f.geometry.coordinates[0],
+      ad: [p.name || sokak, p.name && sokak && sokak !== p.name ? sokak : "", ...yer].filter(Boolean).join(", "),
+      genel: GENEL_YER.has(p.osm_value) || p.type === "city" || p.type === "district",
+    };
+  }).filter((x) => x.ad);
+}
+// Tek sonuç: önce Photon, olmazsa Nominatim
 async function adresBul(metin) {
-  const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&accept-language=tr&countrycodes=tr&q=${encodeURIComponent(metin)}`;
-  const s = await getJSON(url);
-  return s[0] ? { lat: +s[0].lat, lon: +s[0].lon, ad: s[0].display_name } : null;
+  try {
+    const o = await oneriGetir(metin, 1);
+    if (o[0]) return o[0];
+  } catch { /* Nominatim'e düş */ }
+  const s = await getJSON(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&accept-language=tr&countrycodes=tr&q=${encodeURIComponent(metin)}`);
+  return s[0] ? { lat: +s[0].lat, lon: +s[0].lon, ad: s[0].display_name.split(",").slice(0, 3).join(","), genel: ["city", "town", "suburb", "administrative"].includes(s[0].type) } : null;
+}
+function konumuAyarla(k, s) {
+  Object.assign(k, { lat: s.lat, lon: s.lon, adres: s.ad, genel: !!s.genel, yazilan: "" });
+}
+
+// Adres kutusu: yazdıkça öneri listesi, ok tuşları + Enter ile seçim
+function adresKutusunuBagla(k, li) {
+  const girdi = li.querySelector(".adres"), liste = li.querySelector(".oneriler");
+  let oneriler = [], secili = -1, zamanlayici, istekNo = 0;
+  const kapat = () => { liste.hidden = true; girdi.setAttribute("aria-expanded", "false"); secili = -1; };
+  const goster = () => {
+    liste.innerHTML = "";
+    if (!oneriler.length) {
+      liste.innerHTML = `<li class="bos">Sonuç yok. Sokak, mahalle ya da mekan adıyla dene.</li>`;
+    }
+    oneriler.forEach((o, i) => {
+      const e = document.createElement("li");
+      e.setAttribute("role", "option");
+      e.className = i === secili ? "secili" : "";
+      e.textContent = o.ad;
+      if (o.genel) e.insertAdjacentHTML("beforeend", ` <small>semt</small>`);
+      e.addEventListener("mousedown", (ev) => { ev.preventDefault(); sec(i); });
+      liste.appendChild(e);
+    });
+    liste.hidden = false; girdi.setAttribute("aria-expanded", "true");
+  };
+  const sec = (i) => {
+    const o = oneriler[i]; if (!o) return;
+    konumuAyarla(k, o); kapat(); durum(""); ciz(); haritayiSigdir();
+  };
+  girdi.addEventListener("input", () => {
+    k.yazilan = girdi.value;
+    clearTimeout(zamanlayici);
+    const metin = girdi.value.trim();
+    if (metin.length < 3) return kapat();
+    zamanlayici = setTimeout(async () => {
+      const no = ++istekNo;
+      try { const o = await oneriGetir(metin); if (no === istekNo) { oneriler = o; secili = o.length ? 0 : -1; goster(); } }
+      catch { /* öneri gelmezse Enter yine çalışır */ }
+    }, 300);
+  });
+  girdi.addEventListener("keydown", async (e) => {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      if (liste.hidden || !oneriler.length) return;
+      e.preventDefault();
+      secili = (secili + (e.key === "ArrowDown" ? 1 : -1) + oneriler.length) % oneriler.length; goster();
+    } else if (e.key === "Escape") kapat();
+    else if (e.key === "Enter") {
+      e.preventDefault();
+      if (!liste.hidden && secili >= 0) return sec(secili);
+      if (!girdi.value.trim()) return;
+      durum("Adres aranıyor…");
+      try {
+        const s = await adresBul(girdi.value.trim());
+        if (!s) return durum(`"${girdi.value.trim()}" bulunamadı. Sokak, mahalle ya da mekan adıyla dene.`, true);
+        konumuAyarla(k, s); durum(""); ciz(); haritayiSigdir();
+      } catch { durum("Adres servisine ulaşılamadı, biraz sonra tekrar dene.", true); }
+    }
+  });
+  girdi.addEventListener("blur", () => setTimeout(kapat, 150));
+}
+
+// "Bul"a basıldığında yazılmış ama seçilmemiş adresleri kendimiz ara
+async function bekleyenAdresleriCoz() {
+  for (const k of kisiler) {
+    const metin = (k.yazilan || "").trim();
+    if (!metin) continue;
+    durum(`${k.ad} için "${metin}" aranıyor…`);
+    const s = await adresBul(metin);
+    if (!s) throw new Error(`${k.ad} için "${metin}" bulunamadı. Sokak, mahalle ya da mekan adıyla dene.`);
+    konumuAyarla(k, s);
+  }
+  ciz();
 }
 async function tersAdres(lat, lon) {
   try {
@@ -188,15 +293,23 @@ async function topluErisim(kisi, zaman) {
 // Kesin toplu taşıma yolculuğu: buluşma saatinde orada olacak şekilde. En iyi seçenek: süre + aktarma cezası.
 async function topluRota(kisi, hedef, zaman) {
   const url = `${MOTIS}/api/v1/plan?fromPlace=${kisi.lat.toFixed(6)},${kisi.lon.toFixed(6)}&toPlace=${hedef.lat.toFixed(6)},${hedef.lon.toFixed(6)}`
-    + `&time=${zamanISO(zaman)}&arriveBy=true&numItineraries=3&maxPreTransitTime=1200&maxPostTransitTime=1200`;
+    + `&time=${zamanISO(zaman)}&arriveBy=true&numItineraries=5&maxPreTransitTime=1200&maxPostTransitTime=1200`;
   const j = await getJSON(url, { signal: AbortSignal.timeout(30000) });
   const secenekler = [...(j.itineraries || []), ...(j.direct || [])];
   if (!secenekler.length) return null;
-  // Süre + aktarma cezası + buluşmadan 10 dk'dan fazla erken varmanın yarısı (boşuna beklemesin)
+  // Süre + cezalar + buluşmadan 10 dk'dan fazla erken varmanın yarısı (boşuna beklemesin)
   const hedefSaat = new Date(zamanISO(zaman)).getTime();
-  const maliyet = (it) => it.duration + (it.transfers || 0) * AKTARMA_CEZASI
+  const maliyet = (it) => it.duration + ekMaliyet(it)
     + 0.5 * Math.max(0, (hedefSaat - new Date(it.endTime).getTime()) / 1000 - 600);
   return secenekler.sort((a, b) => maliyet(a) - maliyet(b))[0];
+}
+
+// Minibüs ve dolmuşun gerçek saati yok (İBB verisi "kaç dakikada bir"), motor beklemeyi az sayar.
+const MINIBUS_PAYI = 5 * 60;
+const tarifesiz = (l) => /minibus|dolmus/i.test(l.agencyName || "");
+// Sıralamada kullanılan ek maliyet: aktarma cezası + tarifesiz hat payı
+function ekMaliyet(it) {
+  return (it.transfers || 0) * AKTARMA_CEZASI + it.legs.filter(tarifesiz).length * MINIBUS_PAYI;
 }
 
 // Hat türü, simge ve renk (İBB verisinde Marmaray "metro", metrobüs "otobüs" görünüyor; düzeltiyoruz)
@@ -318,15 +431,20 @@ function ciz() {
       <input class="isim" value="" aria-label="İsim">
       <button class="sil" title="Kişiyi sil">×</button>
       <div class="adres-satir">
-        <input class="adres" placeholder="Adres, semt ya da mekan yaz" aria-label="Adres">
-        <button class="kucuk konumum" title="Telefonun konumunu kullan">Konumum</button>
+        <div class="adres-kutu">
+          <input class="adres" placeholder="Sokak, mekan ya da semt yaz" aria-label="Adres" autocomplete="off" role="combobox" aria-expanded="false">
+          <ul class="oneriler" role="listbox" hidden></ul>
+        </div>
+        <button class="kucuk konumum" title="Telefonun konumunu kullan">📍 Konumum</button>
       </div>
       <div class="konum-yazi ${k.lat != null ? "tamam" : ""}"></div>
       <div class="tur-secim" role="group" aria-label="Ulaşım">${Object.entries(TURLER).map(([t, v]) =>
         `<button data-t="${t}" class="${k.tur === t ? "secili" : ""}" title="${v.ad}">${v.ikon} <span>${v.ad}</span></button>`).join("")}</div>`;
     li.querySelector(".isim").value = k.ad;
-    li.querySelector(".adres").value = k.lat != null ? "" : k.adres;
-    li.querySelector(".konum-yazi").textContent = k.lat != null ? `✓ ${k.adres || "Konum alındı"}` : "Konum yok";
+    li.querySelector(".adres").value = k.yazilan || "";
+    li.querySelector(".konum-yazi").textContent = k.lat != null
+      ? `✓ ${k.adres || "Konum alındı"}${k.genel ? " (semt merkezi alındı; daha doğru sonuç için sokak ya da mekan yaz)" : ""}`
+      : "Konum yok: adres yaz ve listeden seç, ya da 📍 Konumum'a bas";
     li.addEventListener("click", () => { if (aktifId !== k.id) { aktifId = k.id; ul.querySelectorAll(".kisi").forEach((x) => x.classList.remove("aktif")); li.classList.add("aktif"); } });
     li.querySelectorAll(".tur-secim button").forEach((b) => b.addEventListener("click", () => {
       k.tur = b.dataset.t; li.querySelectorAll(".tur-secim button").forEach((x) => x.classList.toggle("secili", x === b)); kaydet();
@@ -334,22 +452,13 @@ function ciz() {
     li.querySelector(".isim").addEventListener("input", (e) => { k.ad = e.target.value; li.querySelector(".rozet").textContent = harf(k.ad); kaydet(); });
     li.querySelector(".isim").addEventListener("change", ciz);
     li.querySelector(".sil").addEventListener("click", (e) => { e.stopPropagation(); kisiler = kisiler.filter((x) => x !== k); ciz(); });
-    li.querySelector(".adres").addEventListener("keydown", async (e) => {
-      if (e.key !== "Enter" || !e.target.value.trim()) return;
-      durum("Adres aranıyor…");
-      try {
-        const s = await adresBul(e.target.value.trim());
-        if (!s) return durum("Bu adres bulunamadı. Daha açık yaz (ör. 'Kadıköy Moda, İstanbul').", true);
-        Object.assign(k, { lat: s.lat, lon: s.lon, adres: s.ad.split(",").slice(0, 3).join(",") });
-        durum(""); ciz(); haritayiSigdir();
-      } catch { durum("Adres servisine ulaşılamadı, biraz sonra tekrar dene.", true); }
-    });
+    adresKutusunuBagla(k, li);
     li.querySelector(".konumum").addEventListener("click", (e) => {
       e.stopPropagation();
       if (!navigator.geolocation) return durum("Bu tarayıcı konum vermiyor.", true);
       durum("Konum alınıyor…");
       navigator.geolocation.getCurrentPosition(async (p) => {
-        Object.assign(k, { lat: p.coords.latitude, lon: p.coords.longitude, adres: "Telefon konumu" });
+        Object.assign(k, { lat: p.coords.latitude, lon: p.coords.longitude, adres: "Telefon konumu", yazilan: "", genel: false });
         durum(""); ciz(); haritayiSigdir();
         k.adres = (await tersAdres(k.lat, k.lon)) || k.adres; ciz();
       }, () => durum("Konum izni verilmedi. Adres yazabilir ya da haritaya tıklayabilirsin.", true), { enableHighAccuracy: true, timeout: 15000 });
@@ -361,7 +470,7 @@ function ciz() {
         icon: L.divIcon({ className: "", html: `<div class="pin" style="background:${renk(k)}">${harf(k.ad)}</div>`, iconSize: [30, 30], iconAnchor: [15, 15] }),
         draggable: true,
       }).bindTooltip(k.ad).on("dragend", async (e) => {
-        const ll = e.target.getLatLng(); k.lat = ll.lat; k.lon = ll.lng; k.adres = (await tersAdres(k.lat, k.lon)) || "Haritadan seçildi"; ciz();
+        const ll = e.target.getLatLng(); k.lat = ll.lat; k.lon = ll.lng; k.genel = false; k.adres = (await tersAdres(k.lat, k.lon)) || "Haritadan seçildi"; ciz();
       }).addTo(kisiKatmani);
     }
   });
@@ -419,8 +528,25 @@ async function overpassGetir(merkez, yaricap, etiketler) {
     return { id: e.type + e.id, ad: t.name, tur: TUR_ADI[t.amenity] || TUR_ADI[t.leisure] || "Mekan", lat, lon, adres };
   }).filter((m) => m.lat != null);
 }
+// Birincil kaynak: kendi OSM verimizden çıkarılmış mekanlar.json (veri/mekanlar.py). Dış servis yalnız yedek.
+let yerelMekanlar = null;
+async function yerelMekanlariYukle() {
+  if (!yerelMekanlar) {
+    const j = await getJSON("mekanlar.json", { signal: AbortSignal.timeout(15000) });
+    yerelMekanlar = j.m.map(([lat, lon, ad, t, adres]) => ({ lat, lon, ad, osm: j.turler[t], adres, id: `${ad}|${lat}|${lon}` }));
+  }
+  return yerelMekanlar;
+}
 async function mekanlariGetir(merkez, yaricap) {
   const gruplar = kategori === "hepsi" ? ["kafe", "bar", "restoran", "etkinlik"] : [kategori];
+  const izinli = new Set(gruplar.flatMap((g) => KATEGORI[g].flatMap(([, deger]) => deger.split("|"))));
+  try {
+    const hepsi = await yerelMekanlariYukle();
+    return hepsi.filter((m) => izinli.has(m.osm) && mesafe(merkez, m) <= yaricap)
+      .map((m) => ({ ...m, tur: TUR_ADI[m.osm] || "Mekan" }));
+  } catch (e) {
+    console.warn("mekanlar.json okunamadı, dış servis deneniyor", e);
+  }
   let sonuc;
   try {
     sonuc = (await Promise.all(gruplar.map((g) => photonGetir(merkez, yaricap, KATEGORI[g])))).flat();
@@ -442,8 +568,9 @@ async function sinirli(isler, n = 6) {
 
 // ---------- Ana akış ----------
 async function bul() {
+  try { await bekleyenAdresleriCoz(); } catch (e) { return durum(e.message.startsWith("HTTP") ? "Adres servisine ulaşılamadı, biraz sonra tekrar dene." : e.message, true); }
   const hazir = kisiler.filter((k) => k.lat != null);
-  if (hazir.length < 2) return durum("En az 2 kişinin konumu lazım.", true);
+  if (hazir.length < 2) return durum("En az 2 kişinin konumu lazım: adres yaz ve listeden seç, ya da 📍 Konumum'a bas.", true);
   const zaman = $("#zaman").value;
   if (!zaman) return durum("Buluşma zamanını seç.", true);
   const btn = $("#bul"); btn.disabled = true;
@@ -505,7 +632,7 @@ async function bul() {
             m.rotalar[k.id] = it;
             m.sureler[i] = it ? it.duration : Infinity;
             m.cezali = m.cezali || [...m.sureler];
-            m.cezali[i] = it ? it.duration + (it.transfers || 0) * AKTARMA_CEZASI : Infinity;
+            m.cezali[i] = it ? it.duration + ekMaliyet(it) : Infinity;
           });
         });
       });
@@ -583,7 +710,8 @@ function tarifHTML(k, m, i) {
     const etiket = hat.toLocaleLowerCase("tr").includes(h.ad.toLocaleLowerCase("tr")) ? hat : `${h.ad} ${hat}`;
     return `<li class="adim"><span class="hat" style="background:${h.renk}">${h.ikon} ${esc(etiket)}</span>
       <div>Bin: <b>${esc(yerAdi(l.from))}</b> · ${saatYaz(l.startTime)}${l.headsign ? ` · ${esc(l.headsign)} yönü` : ""}</div>
-      <div>İn: <b>${esc(yerAdi(l.to))}</b> · ${saatYaz(l.endTime)} · ${durak} durak</div></li>`;
+      <div>İn: <b>${esc(yerAdi(l.to))}</b> · ${saatYaz(l.endTime)} · ${durak} durak</div>
+      ${tarifesiz(l) ? `<div class="not">Sabit saati yok, saatler tahmini. Birkaç dakika fazla bekleyebilirsin.</div>` : ""}</li>`;
   }).join("");
   return `<div class="tarif">${bas} · Çıkış ${saatYaz(it.startTime)}, varış ${saatYaz(it.endTime)}</div><ol class="adimlar">${adimlar}</ol></div>`;
 }

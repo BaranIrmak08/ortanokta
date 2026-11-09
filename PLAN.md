@@ -201,6 +201,20 @@ Ortalama mutlak fark yaklaşık 6–7 dk. 5 rotanın 4'ü ±10 dk hedefinin içi
 3. **İstasyon girişleri.** Raylı istasyonların veride tek bir noktası var, bu yüzden bazı yürümeler uzun çıkıyor. Çözüm: OSM'deki istasyon girişlerini (`railway=subway_entrance`) durağa bağlamak. Daha büyük bir iş, sonraya bırakılabilir.
 4. **Ücret:** Google ₺ cinsinden ücret gösteriyor (ör. 157,40). Bizde yok, sonraya bırakılabilir.
 
+## 8f. Düzeltmeler (9 Kas, akşam)
+
+- **Raylı aktarmalar:** `hazirla.py` 700 m içindeki raylı duraklar arasına `transfers.txt` yazıyor. Süre = mesafe × 1,3 / 1,2 m/sn + 3 dk peron payı, en az 4 dk. Aynı durakta 3 dk. Örnek: Yenikapı Marmaray→M2 ≈ 6 dk.
+- **MOTIS ayarları:** `default_transfer_time: 3`, `osr_footpath: true` (aktarma yürüyüşleri gerçek yaya yolundan), `geocoding: true`.
+- **Karşılaştırma tekrarı:** Suadiye→Taksim 41 → 44 dk (Google 50). Kalan fark derin istasyondan sokağa çıkış süresinden geliyor; durak bazında tanımlanamıyor.
+- **Minibüs ve dolmuş:** Sıralamada biniş başına +5 dk pay. Tarifte "saatler tahmini" notu. Plan isteğinde 5 seçenek alınıyor.
+- **Adres girişi:**
+  - Yazarken öneri listesi çıkıyor (Photon, İstanbul ile sınırlı; yedek MOTIS adres araması).
+  - Ok tuşları ve Enter ile seçilebiliyor.
+  - "Bul"a basınca yazılmış ama seçilmemiş adresler otomatik aranıyor. Eskiden yalnız Enter'la aranıyordu; kullanıcı "konum girmediniz" hatası aldı.
+  - Semt merkezi alınırsa "daha doğru sonuç için sokak ya da mekan yaz" uyarısı çıkıyor.
+- **Mekanlar artık kendi verimizden:** `veri/mekanlar.py`, İstanbul OSM'den 10.610 mekan çıkarıp `mekanlar.json` dosyasına yazıyor (0,6 MB, sıkıştırılmış 0,2 MB). Sebebi: Photon çok istekte engelledi, Overpass zaman aşımına düştü. Dış servisler yalnız yedek.
+- **MOTIS adres araması:** Sıralaması zayıf ("Moda caddesi" için önce başka semtte bir otobüs durağını getiriyor). Bu yüzden yalnız yedek olarak kullanılıyor.
+
 ## 9. Aşamalar
 
 | # | İş | Bitti sayılır |

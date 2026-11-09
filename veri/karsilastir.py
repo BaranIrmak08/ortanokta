@@ -8,7 +8,8 @@ ROTALAR = [
     ("Maslak -> Beylerbeyi",   "41.1120,29.0200", "41.0430,29.0410"),
     ("Bakirkoy -> Uskudar",    "40.9783,28.8745", "41.0260,29.0150"),
 ]
-simdi = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
+import sys
+simdi = datetime.datetime.fromisoformat(sys.argv[1]) if len(sys.argv) > 1 else datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
 print("cikis (UTC):", simdi.isoformat())
 for ad, a, b in ROTALAR:
     q = urllib.parse.urlencode({"fromPlace": a, "toPlace": b, "time": simdi.isoformat().replace("+00:00", "Z"), "numItineraries": 3})
