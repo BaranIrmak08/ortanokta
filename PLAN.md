@@ -183,6 +183,24 @@ Veri güncellemek için betiği yeniden çalıştırmak yeterli.
 - **MOTIS ayarı:** `limits.onetoall_max_travel_minutes: 150`. Sunucu ayarı `motis/data/config.yml` dosyasından okuyor, değişiklik oraya da kopyalanmalı.
 - **Başlatma:** `baslat.bat`
 
+## 8e. 5. aşama: Google Haritalar karşılaştırması (9 Kas, Pazartesi ~17:30 çıkış)
+
+| Rota | Google | Bizim motor | Fark | Not |
+|---|---|---|---|---|
+| Balat → Kadıköy | 52 dk: 99A → Eminönü–Kadıköy vapuru → 19F | 46–54 dk: 99A → vapur ya da Marmaray | ±3 dk | Uyumlu |
+| Suadiye → Taksim | 50 dk: Marmaray → M2, 18 dk yürüme | 41 dk: Marmaray → M2, 8 dk yürüme | **−9 dk** | Aktarma ve istasyon içi yürüme kısa sayılıyor |
+| Kandilli → Beşiktaş | 31 dk: 40T → 22 | 37 dk: 15KÇ → Anadoluhisarı–Aşiyan vapuru → 22 | +6 dk | Farklı güzergâh seçiyor |
+| Maslak → Beylerbeyi | 55 dk: otobüs → metrobüs → 15F/14M | 43–48 dk: minibüs → 34Z → 14M | **−7…−12 dk** | Minibüs saatleri gerçek tarife değil, sıklıktan türetildi; iyimser |
+| Bakırköy → Üsküdar | 26 dk: Marmaray direkt, 8 dk yürüme | 32 dk: Marmaray direkt, 13 dk yürüme | +6 dk | İstasyona tek giriş noktasından yürütüyoruz |
+
+Ortalama mutlak fark yaklaşık 6–7 dk. 5 rotanın 4'ü ±10 dk hedefinin içinde. Rota mantığı doğru: aynı hatlar, aynı aktarma noktaları seçiliyor.
+
+**Tespit edilen sorunlar ve çözüm önerileri:**
+1. **Derin istasyonlarda aktarma ve iniş-çıkış süresi az sayılıyor.** Örnek: Yenikapı'da Marmaray'dan M2'ye 380 m yürüme 2 dk sayılıyor. Çözüm: `hazirla.py` büyük aktarma merkezleri için (Yenikapı, Üsküdar, Ayrılık Çeşmesi, Sirkeci, Zincirlikuyu, Mecidiyeköy, Söğütlüçeşme) `transfers.txt` dosyasına 5–7 dk asgari aktarma süresi yazsın. Ayrıca MOTIS `default_transfer_time` 2 → 3 dk.
+2. **Minibüs ve dolmuş iyimser.** Saatler veride yok, sıklıktan türetiliyor, bu yüzden bekleme süresi gerçekte daha uzun olabilir. Çözüm: bu hatlara biniş başına ek bekleme payı (ör. +5 dk), ya da "minibüs/dolmuş kullanma" seçeneği.
+3. **İstasyon girişleri.** Raylı istasyonların veride tek bir noktası var, bu yüzden bazı yürümeler uzun çıkıyor. Çözüm: OSM'deki istasyon girişlerini (`railway=subway_entrance`) durağa bağlamak. Daha büyük bir iş, sonraya bırakılabilir.
+4. **Ücret:** Google ₺ cinsinden ücret gösteriyor (ör. 157,40). Bizde yok, sonraya bırakılabilir.
+
 ## 9. Aşamalar
 
 | # | İş | Bitti sayılır |
