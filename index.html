@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Orta Nokta</title>
+  <meta name="description" content="Arkadaş grubunun hepsine yakın kafe, bar ve mekanları bulur.">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside id="panel">
+    <header>
+      <h1>Orta Nokta</h1>
+      <p class="alt">Herkesin konumunu ekle, hepinize yakın mekanı bulalım.</p>
+    </header>
+
+    <section>
+      <div class="baslik-satir">
+        <h2>Kişiler</h2>
+        <button id="kisiEkle" class="kucuk">+ Kişi ekle</button>
+      </div>
+      <ul id="kisiler"></ul>
+      <p class="ipucu">Adres yaz ve Enter'a bas, "Konumum" ile telefonun konumunu al ya da haritaya tıkla (seçili kişinin yeri olur).</p>
+    </section>
+
+    <section>
+      <h2>Nereye gidelim?</h2>
+      <div id="kategoriler" class="cipler">
+        <button data-k="hepsi" class="secili">Hepsi</button>
+        <button data-k="kafe">Kafe</button>
+        <button data-k="bar">Bar</button>
+        <button data-k="restoran">Restoran</button>
+        <button data-k="etkinlik">Etkinlik</button>
+      </div>
+      <button id="bul" class="ana">Buluşma yeri bul</button>
+      <button id="paylas" class="ikincil">Grup bağlantısını kopyala</button>
+      <p id="durum" class="durum"></p>
+    </section>
+
+    <section id="sonucBolumu" hidden>
+      <h2>Öneriler</h2>
+      <p class="ipucu">En üstteki en adil olan: en uzaktaki kişinin yolu en kısa, aradaki fark en az.</p>
+      <ol id="sonuclar"></ol>
+    </section>
+  </aside>
+  <main id="harita"></main>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

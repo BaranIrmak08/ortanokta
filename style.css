@@ -1,0 +1,103 @@
+:root {
+  --zemin: #f6f4ef;
+  --kart: #ffffff;
+  --yazi: #1d1d1f;
+  --soluk: #6b6b70;
+  --cizgi: #e2dfd8;
+  --vurgu: #e4572e;
+  --vurgu-koyu: #c43f19;
+  --yesil: #2a9d6f;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: var(--yazi);
+  background: var(--zemin);
+  display: flex;
+}
+#panel {
+  width: 400px;
+  max-width: 100%;
+  height: 100vh;
+  overflow-y: auto;
+  padding: 20px 18px 40px;
+  border-right: 1px solid var(--cizgi);
+}
+#harita { flex: 1; height: 100vh; }
+h1 { margin: 0; font-size: 26px; letter-spacing: -0.5px; }
+h1::before { content: "◎ "; color: var(--vurgu); }
+h2 { font-size: 15px; margin: 0 0 10px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--soluk); }
+.alt { margin: 4px 0 0; color: var(--soluk); }
+section { margin-top: 22px; }
+.baslik-satir { display: flex; justify-content: space-between; align-items: center; }
+.ipucu { font-size: 12.5px; color: var(--soluk); margin: 8px 0 0; line-height: 1.4; }
+.durum { font-size: 14px; min-height: 1.2em; margin: 10px 0 0; }
+.durum.hata { color: var(--vurgu-koyu); }
+
+button {
+  font: inherit; cursor: pointer; border-radius: 10px;
+  border: 1px solid var(--cizgi); background: var(--kart); color: var(--yazi);
+  padding: 8px 12px;
+}
+button:hover { border-color: #bbb; }
+button:disabled { opacity: .55; cursor: progress; }
+button.kucuk { padding: 5px 10px; font-size: 13px; }
+button.ana {
+  width: 100%; margin-top: 14px; padding: 12px; font-weight: 600; font-size: 16px;
+  background: var(--vurgu); border-color: var(--vurgu); color: #fff;
+}
+button.ana:hover { background: var(--vurgu-koyu); }
+button.ikincil { width: 100%; margin-top: 8px; font-size: 14px; }
+
+#kisiler { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+.kisi {
+  background: var(--kart); border: 1px solid var(--cizgi); border-radius: 12px;
+  padding: 10px; display: grid; grid-template-columns: 28px 1fr auto; gap: 6px 8px; align-items: center;
+}
+.kisi.aktif { outline: 2px solid var(--vurgu); outline-offset: -1px; }
+.rozet {
+  width: 28px; height: 28px; border-radius: 50%; color: #fff; font-weight: 700; font-size: 13px;
+  display: grid; place-items: center;
+}
+.kisi input {
+  font: inherit; border: 1px solid var(--cizgi); border-radius: 8px; padding: 6px 8px; width: 100%; min-width: 0;
+  background: #fff; color: var(--yazi);
+}
+.kisi .isim { font-weight: 600; }
+.kisi .adres-satir { grid-column: 2 / 4; display: flex; gap: 6px; }
+.kisi .konum-yazi { grid-column: 2 / 4; font-size: 12px; color: var(--soluk); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kisi .konum-yazi.tamam { color: var(--yesil); }
+.sil { border: none; background: none; color: var(--soluk); font-size: 18px; padding: 2px 6px; }
+
+.cipler { display: flex; flex-wrap: wrap; gap: 6px; }
+.cipler button { border-radius: 999px; padding: 6px 14px; font-size: 14px; }
+.cipler button.secili { background: var(--yazi); color: #fff; border-color: var(--yazi); }
+
+#sonuclar { padding: 0; margin: 0; list-style: none; display: grid; gap: 8px; counter-reset: s; }
+.sonuc {
+  background: var(--kart); border: 1px solid var(--cizgi); border-radius: 12px; padding: 10px 12px; cursor: pointer;
+  counter-increment: s;
+}
+.sonuc:hover, .sonuc.secili { border-color: var(--vurgu); }
+.sonuc .ust { display: flex; justify-content: space-between; gap: 8px; }
+.sonuc .ad { font-weight: 600; }
+.sonuc .ad::before { content: counter(s) ". "; color: var(--vurgu); }
+.sonuc .tur { font-size: 12px; color: var(--soluk); white-space: nowrap; }
+.sonuc .mesafeler { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 6px; font-size: 13px; }
+.sonuc .ozet { font-size: 12px; color: var(--soluk); margin-top: 4px; }
+.sonuc a { font-size: 12px; color: var(--vurgu-koyu); }
+.nokta { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
+
+.pin {
+  width: 30px; height: 30px; border-radius: 50%; color: #fff; font-weight: 700; font-size: 13px;
+  display: grid; place-items: center; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.4);
+}
+.mekan-pin { width: 14px; height: 14px; border-radius: 50%; background: var(--vurgu); border: 2px solid #fff; box-shadow: 0 1px 3px rgba(0,0,0,.4); }
+.mekan-pin.secili { width: 22px; height: 22px; background: var(--yazi); }
+
+@media (max-width: 760px) {
+  body { flex-direction: column; }
+  #panel { width: 100%; height: auto; border-right: none; border-bottom: 1px solid var(--cizgi); padding: 16px; }
+  #harita { height: 60vh; flex: none; order: -1; }
+}
