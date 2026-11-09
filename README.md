@@ -11,17 +11,16 @@ Arkadaş grubunun hepsine aşağı yukarı eşit uzaklıkta buluşma mekanı bul
 1. Grubun ortasına halkalar halinde ~50 örnek nokta serpilir; her kişiden bu noktalara **yol ağı üzerinden** süre hesaplanır (araba, yürüyüş ya da bisiklet).
 2. En uzun yolculuğu en kısa olan bölge seçilir. İkinci iyi bölge uzaktaysa (ör. boğazın öbür yakası) orası da aday olur.
 3. Bu bölgelerdeki mekanlar çekilir, her mekana herkesten gerçek yol süresi ve mesafesi hesaplanır.
-4. Puan = en uzun yolculuk + (en uzun − en kısa) / 2. Düşük puan daha adil.
+4. Puan = en uzun yolculuk + (en uzun − en kısa) / 2 + aktarma başına 5 dk. Düşük puan daha adil.
 5. Seçilen mekana herkesin rotası haritada yol üzerinde çizilir.
 
-Sınırlar: araba süreleri trafiksizdir, toplu taşıma yok.
+Herkes kendi ulaşımını seçer, hesap buluşma saatine göre yapılır. Toplu taşımada adım adım tarif verilir. Sınırlar: araba süreleri trafiksizdir; raylı sistem ve vapur tarifeleri İBB'nin 2024 verisinden.
 
 ## Altyapı
-Sadece statik dosyalar (HTML/CSS/JS), sunucu ve API anahtarı yok.
-- Harita: Leaflet + OpenStreetMap
-- Adres arama: Nominatim
-- Mekanlar: Photon (komoot), çalışmazsa Overpass
-- Yol süresi ve rotalar: OSRM (routing.openstreetmap.de, yedek router.project-osrm.org)
+Site statik (HTML/CSS/JS), API anahtarı yok. Hesap için kendi MOTIS sunucumuz gerekiyor.
+- Toplu taşıma, araba, yürüyüş, bisiklet: MOTIS + İBB Açık Veri (İETT GTFS ve Toplu Ulaşım GTFS) + İstanbul OSM
+- Yedek yol servisi: OSRM (routing.openstreetmap.de, router.project-osrm.org)
+- Harita: Leaflet + OpenStreetMap · Adres: Nominatim · Mekanlar: Photon (yedek Overpass)
 
 ## Yerelde çalıştırmak
 İlk kurulum (bir kez):
