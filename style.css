@@ -101,3 +101,18 @@ button.ikincil { width: 100%; margin-top: 8px; font-size: 14px; }
   #panel { width: 100%; height: auto; border-right: none; border-bottom: 1px solid var(--cizgi); padding: 16px; }
   #harita { height: 60vh; flex: none; order: -1; }
 }
+
+/* Kişi başı ulaşım seçimi */
+.tur-secim { grid-column: 2 / 4; display: flex; gap: 4px; flex-wrap: wrap; }
+.tur-secim button { padding: 4px 8px; font-size: 12.5px; border-radius: 999px; }
+.tur-secim button.secili { background: var(--yazi); color: #fff; border-color: var(--yazi); }
+@media (max-width: 420px) { .tur-secim button span { display: none; } .tur-secim button { font-size: 16px; } }
+.zaman { font: inherit; width: 100%; padding: 8px 10px; border: 1px solid var(--cizgi); border-radius: 10px; background: #fff; color: var(--yazi); }
+
+/* Yol tarifi */
+.tarifler { margin-top: 10px; border-top: 1px dashed var(--cizgi); padding-top: 8px; display: grid; gap: 10px; cursor: default; }
+.tarif-bas { font-size: 13.5px; }
+.adimlar { list-style: none; margin: 6px 0 0; padding: 0 0 0 10px; border-left: 2px solid var(--cizgi); display: grid; gap: 6px; }
+.adim { font-size: 13px; line-height: 1.4; }
+.adim.yuru { color: var(--soluk); }
+.hat { display: inline-block; color: #fff; font-weight: 600; font-size: 12px; padding: 1px 7px; border-radius: 6px; margin-bottom: 2px; }

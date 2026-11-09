@@ -48,3 +48,5 @@ street_routing: true
 osr_footpath: false
 geocoding: false
 reverse_geocoding: false
+limits:
+  onetoall_max_travel_minutes: 150

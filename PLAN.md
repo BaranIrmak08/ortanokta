@@ -165,6 +165,24 @@ Veri güncellemek için betiği yeniden çalıştırmak yeterli.
   - Bazı İETT durak adlarında Türkçe harf kaybı var (kaynak veride bozuk).
   - Gereksiz kısa aktarmalar öneriliyor (ör. 0 dk'lık otobüs). Aktarma cezası bunu çözecek.
 
+## 8d. 2–4. aşama sonucu (9 Kas)
+
+- **Kişi başı ulaşım:** Her kişinin kartında Toplu taşıma, Araba, Yürüyerek ve Bisiklet seçenekleri var. Seçim grup bağlantısına da yazılıyor.
+- **Araba, yürüyüş ve bisiklet de artık kendi MOTIS sunucumuzda hesaplanıyor** (`one-to-many`, aynı İstanbul haritası). Dışarıdaki OSRM yalnız yedek. Sebebi: routing.openstreetmap.de art arda isteklerde 429 (çok fazla istek) verdi, herkese açık sitede bu kabul edilemez.
+- **Buluşma saati:** Bütün hesap "o saatte orada ol" mantığıyla yapılıyor (`arriveBy`). Toplu taşıma rotası seçilirken bakılanlar: süre, aktarma başına 5 dk ceza ve 10 dk'dan fazla erken varmanın yarısı.
+- **Akış:**
+  1. Toplu taşımacılar için "tek noktadan her yere" sorgusu.
+  2. 49 örnek noktayla adil bölge.
+  3. Mekanlar.
+  4. Ön sıralama.
+  5. İlk 12 mekan için kesin plan.
+  6. Kesin süreye göre yeniden sıralama.
+
+  Videodaki 4 kişi (2 toplu taşıma, 1 araba, 1 yürüyüş) 3–7 sn'de sonuç veriyor.
+- **Tarif:** Her parça için hat türü (Marmaray, metrobüs, minibüs ve dolmuş ayrı ayrı tanınıyor), hat numarası, biniş durağı ve saati, yön, iniş durağı ve saati, durak sayısı yazıyor. Haritada parça parça çiziliyor: yürüme kesik çizgi, araçlar türün renginde.
+- **MOTIS ayarı:** `limits.onetoall_max_travel_minutes: 150`. Sunucu ayarı `motis/data/config.yml` dosyasından okuyor, değişiklik oraya da kopyalanmalı.
+- **Başlatma:** `baslat.bat`
+
 ## 9. Aşamalar
 
 | # | İş | Bitti sayılır |

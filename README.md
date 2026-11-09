@@ -23,4 +23,10 @@ Sadece statik dosyalar (HTML/CSS/JS), sunucu ve API anahtarı yok.
 - Mekanlar: Photon (komoot), çalışmazsa Overpass
 - Yol süresi ve rotalar: OSRM (routing.openstreetmap.de, yedek router.project-osrm.org)
 
-Yerelde çalıştırmak: `python -m http.server 5173` → http://localhost:5173
+## Yerelde çalıştırmak
+İlk kurulum (bir kez):
+1. `python veri/indir.py` — İBB toplu taşıma verisi ve İstanbul haritası.
+2. `python veri/hazirla.py` — verideki bozuklukları düzeltir.
+3. MOTIS v2.11.4 Windows sürümünü `motis/` klasörüne aç, `veri/motis-config.yml` dosyasını `motis/config.yml` olarak kopyala, `motis.exe import` çalıştır.
+
+Sonra her seferinde: `baslat.bat` (MOTIS sunucusu + site, http://localhost:5173).

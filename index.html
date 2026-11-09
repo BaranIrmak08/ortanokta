@@ -21,17 +21,13 @@
         <button id="kisiEkle" class="kucuk">+ Kişi ekle</button>
       </div>
       <ul id="kisiler"></ul>
-      <p class="ipucu">Adres yaz ve Enter'a bas, "Konumum" ile telefonun konumunu al ya da haritaya tıkla (seçili kişinin yeri olur).</p>
+      <p class="ipucu">Herkes kendi ulaşımını seçer. Adres yaz ve Enter'a bas, "Konumum" ile telefonun konumunu al ya da haritaya tıkla (seçili kişinin yeri olur).</p>
     </section>
 
     <section>
-      <h2>Nasıl gideceksiniz?</h2>
-      <div id="ulasim" class="cipler">
-        <button data-u="car" class="secili">Araba</button>
-        <button data-u="foot">Yürüyerek</button>
-        <button data-u="bike">Bisiklet</button>
-      </div>
-      <p class="ipucu">Uzaklıklar gerçek yollar üzerinden hesaplanır. Araba süreleri trafiksiz tahmindir, toplu taşıma henüz yok.</p>
+      <h2>Ne zaman buluşuyorsunuz?</h2>
+      <input type="datetime-local" id="zaman" class="zaman" aria-label="Buluşma zamanı">
+      <p class="ipucu">Herkes bu saatte mekanda olacak şekilde hesaplanır. Toplu taşıma sefer saatlerine bakılır; araba süreleri trafiksizdir.</p>
     </section>
 
     <section>
