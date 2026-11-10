@@ -48,6 +48,7 @@ let kisiler = [];   // {id, ad, adres, lat, lon, tur}
 let aktifId = null;
 let kategori = "hepsi";
 let sayac = 0;
+let baglantiAyarlari = {};
 
 // ---------- Harita ----------
 const harita = L.map("harita", { zoomControl: true, preferCanvas: false }).setView([41.015, 28.979], 11);
@@ -523,6 +524,8 @@ function kaydet() {
 function baglantidanYukle() {
   const h = new URLSearchParams(location.hash.slice(1));
   if (h.get("k") && KATEGORI[h.get("k")]) kategori = h.get("k");
+  // Bağlantıyla gelen ek ayarlar: z = buluşma zamanı, s = kalış (saat), ara=1 açılınca ara, yayilma=1 sonra animasyon, tema=koyu
+  baglantiAyarlari = { z: h.get("z"), s: h.get("s"), ara: h.get("ara") === "1", yayilma: h.get("yayilma") ? +h.get("yayilma") : null, tema: h.get("tema") };
   (h.get("g") || "").split(";").filter(Boolean).forEach((p) => {
     const [ad, lat, lon, tur] = p.split(",").map(decodeURIComponent);
     if (!isNaN(+lat) && !isNaN(+lon)) kisiEkle({ ad, lat: +lat, lon: +lon, tur, adres: "Bağlantıdan geldi" });
@@ -774,7 +777,7 @@ async function bul() {
     durum(`${mekanlar.length} mekan değerlendirildi${kapali ? `, ${kapali} kapalı mekan elendi` : ""}; en iyi ${ilk.length} tanesi aşağıda (${((performance.now() - t0) / 1000).toFixed(0)} sn).`);
     harita.fitBounds([...hazir.map((k) => [k.lat, k.lon]), ...ilk.map((m) => [m.lat, m.lon])], { padding: [40, 40] });
     mekanSec(ilk[0], hazir, 0, zaman);
-    if (matchMedia("(max-width: 760px)").matches) $("#sonucBolumu").scrollIntoView({ behavior: "smooth", block: "start" });
+    $("#sonucBolumu").scrollIntoView({ block: "start" }); // sonuçlar panelin başına gelsin
   } catch (e) {
     console.error(e);
     durum(e.message.startsWith("HTTP") || e.name === "TypeError" || e.name === "TimeoutError"
@@ -949,10 +952,12 @@ const saatKutusu = new SaatKutusu().addTo(harita);
 async function yayilmaHazirla(d) {
   const hedef = d.ilk[0];
   const sinirKutu = L.latLngBounds([...d.hazir.map((k) => [k.lat, k.lon]), [hedef.lat, hedef.lon]]).pad(0.15);
-  const izgara = [], n = 20;
-  for (let i = 0; i <= n; i++) for (let j = 0; j <= n; j++) {
-    izgara.push({ lat: sinirKutu.getSouth() + (sinirKutu.getNorth() - sinirKutu.getSouth()) * i / n, lon: sinirKutu.getWest() + (sinirKutu.getEast() - sinirKutu.getWest()) * j / n });
-  }
+  // Araba/yürüyüş/bisiklet için örnek noktalar: kara üstündeki gerçek yerler (duraklar, yoksa mekanlar), en çok 900.
+  // Düz ızgara denize ve boş alanlara da nokta düşürüyordu.
+  let aday = [...d.toplu.values()][0]?.noktalar || (await yerelMekanlariYukle());
+  aday = aday.filter((p) => sinirKutu.contains([p.lat, p.lon]));
+  const adim = Math.max(1, Math.ceil(aday.length / 900));
+  const izgara = aday.filter((_, i) => i % adim === 0).map((p) => ({ lat: p.lat, lon: p.lon }));
   const kisiler_ = await Promise.all(d.hazir.map(async (k) => {
     let liste;
     if (k.tur === "transit") liste = d.toplu.get(k.id).noktalar.filter((p) => sinirKutu.contains([p.lat, p.lon]));
@@ -962,7 +967,8 @@ async function yayilmaHazirla(d) {
   return { sinirKutu, kisiler: kisiler_ };
 }
 
-async function yayilmaOynat() {
+// durOran verilirse (0-1) animasyon o noktada donar ve temizlenmez (bağlantıdaki yayilma=0.6 gibi; tanıtım görseli için)
+async function yayilmaOynat(durOran) {
   const d = sonArama;
   if (!d) return durum("Önce \"Buluşma yeri bul\" ile bir arama yap.", true);
   const btn = $("#yayilma"); btn.disabled = true;
@@ -981,20 +987,21 @@ async function yayilmaOynat() {
     await new Promise((bitti) => {
       // requestAnimationFrame arka plan sekmesinde durur; zamanlayıcı her durumda ilerler
       const kare = () => {
-        const oran = Math.min(1, (performance.now() - basla) / SURE_MS), t = sinir * oran;
+        const oran = Math.min(typeof durOran === "number" ? durOran : 1, (performance.now() - basla) / SURE_MS), t = sinir * oran;
         kisiNoktalari.forEach((liste, ki) => {
           const r = renk(d.hazir[ki]);
           while (isaret[ki] < liste.length && liste[isaret[ki]].sure <= t) {
             const p = liste[isaret[ki]++];
-            const topluMu = d.hazir[ki].tur === "transit"; // duraklar küçük ve belirgin; sokak ızgarası iri ama saydam (öbürlerini örtmesin)
-            L.circleMarker([p.lat, p.lon], { renderer: tuval, radius: topluMu ? 2.5 : 5, stroke: false, fillColor: r, fillOpacity: topluMu ? 0.65 : 0.22, interactive: false }).addTo(yayilmaKatmani);
+            const topluMu = d.hazir[ki].tur === "transit"; // toplu taşıma: duraklar; diğerleri: aynı noktalara sokak süresi (biraz iri, saydam)
+            L.circleMarker([p.lat, p.lon], { renderer: tuval, radius: topluMu ? 2.5 : 3.5, stroke: false, fillColor: r, fillOpacity: topluMu ? 0.65 : 0.45, interactive: false }).addTo(yayilmaKatmani);
           }
         });
         saatKutusu.el.textContent = `⏱ ${Math.round(t / 60)} dk`;
-        if (oran < 1) setTimeout(kare, 30); else bitti();
+        if (oran < (typeof durOran === "number" ? durOran : 1)) setTimeout(kare, 30); else bitti();
       };
       kare();
     });
+    if (typeof durOran === "number") return durum("");
     saatKutusu.el.textContent = `📍 ${hedef.ad}: en uzun yolculuk ${dk(hedef.enUzun)}`;
     await new Promise((r) => setTimeout(r, 1200));
     mekanSec(hedef, d.hazir, 0, d.zaman);
@@ -1009,7 +1016,7 @@ async function yayilmaOynat() {
 // ---------- Başlat ----------
 $("#kisiEkle").addEventListener("click", () => kisiEkle());
 $("#bul").addEventListener("click", bul);
-$("#yayilma").addEventListener("click", yayilmaOynat);
+$("#yayilma").addEventListener("click", () => yayilmaOynat());
 $("#siralama").addEventListener("change", yenidenSirala);
 $("#paylas").addEventListener("click", async () => {
   kaydet();
@@ -1027,3 +1034,10 @@ baglantidanYukle();
 document.querySelectorAll("#kategoriler button").forEach((x) => x.classList.toggle("secili", x.dataset.k === kategori));
 if (!kisiler.length) { kisiEkle({ ad: "Ben" }); kisiEkle({ ad: "Arkadaş 1" }); aktifId = kisiler[0].id; ciz(); }
 haritayiSigdir();
+if (baglantiAyarlari.z) $("#zaman").value = baglantiAyarlari.z;
+if (baglantiAyarlari.s) $("#sure").value = baglantiAyarlari.s;
+if (baglantiAyarlari.tema && (baglantiAyarlari.tema === "koyu") !== (tema === "koyu")) document.querySelector(".tema-dugme").click();
+if (baglantiAyarlari.ara) bul().then(() => {
+  const y = baglantiAyarlari.yayilma;
+  if (y && sonArama) setTimeout(() => yayilmaOynat(y < 1 ? y : undefined), 500);
+});
